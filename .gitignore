@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+build/
+pnpm-debug.log*
+
+# Expo / React Native
+.expo/
+android/app/build/
+android/.gradle/
+
+# Signing keys
+*.keystore
+
+# Python
+__pycache__/
+*.pyc
+
+# Env
+.env
+
+# OS
+.DS_Store
+*.Zone.Identifier
+
+# Claude Code local/session state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
