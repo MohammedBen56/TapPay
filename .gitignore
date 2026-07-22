@@ -3,6 +3,7 @@ node_modules/
 dist/
 build/
 pnpm-debug.log*
+*.tsbuildinfo
 
 # Expo / React Native
 .expo/
@@ -11,10 +12,15 @@ android/.gradle/
 
 # Signing keys
 *.keystore
+server/keys/
 
 # Python
 __pycache__/
 *.pyc
+
+# Telemetry captures (raw data, not source)
+telemetry/data/*.jsonl
+telemetry/data/*.png
 
 # Env
 .env
