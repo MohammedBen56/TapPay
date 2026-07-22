@@ -6,6 +6,12 @@ import pg from "pg";
 // "money is bigint, never float" actually true at the DB boundary -- without it,
 // every journal/reservation amount read from Postgres would silently be a string.
 pg.types.setTypeParser(20, BigInt);
+// SUM(bigint_column) returns NUMERIC (oid 1700), not bigint, to avoid silent
+// overflow -- a different OID the line above does not cover. Every numeric-domain
+// value in this schema is integer money (never a genuine decimal), so parsing it
+// as BigInt here is the correct behavior, not a hack: it's what "no floats, no
+// decimals-as-float" (CLAUDE.md §5) actually requires for balance aggregates.
+pg.types.setTypeParser(1700, BigInt);
 
 // Mirrors the nil-UUID mint account inserted by migrations/001_accounts.cjs.
 export const MINT_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
@@ -45,9 +51,18 @@ export interface ReservationsTable {
   tx_uuid: string;
   account_id: string;
   amount: bigint;
+  currency: string;
   expires_at: Date;
   state: ReservationState;
   created_at: Generated<Date>;
+  /** Populated on commit -- lets idempotent resubmission return the exact same
+   * receipt bytes rather than a fresh (differently-randomized) signature. */
+  receipt_signature: Buffer | null;
+  settled_at: Date | null;
+  /** NULL for a bare reserve() (no known destination); set internally by
+   * transfer(). commit() needs this to know who the credit side of the journal
+   * entry goes to -- see MockBankAdapter and migrations/007. */
+  counterparty_account_id: string | null;
 }
 
 export type OfflineIntentStatus = "PENDING" | "SETTLED" | "FAILED_INSUFFICIENT" | "FAILED_EXPIRED";
