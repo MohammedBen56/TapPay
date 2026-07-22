@@ -1,3 +1,7 @@
 packages:
   - "server"
   - "mobile"
+  - "packages/shared"
+allowBuilds:
+  cbor-extract: true
+  esbuild: true
