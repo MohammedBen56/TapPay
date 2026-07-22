@@ -5,7 +5,7 @@ services:
       POSTGRES_DB: tappay
       POSTGRES_USER: tappay
       POSTGRES_PASSWORD: tappay
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
 
   pgadmin:
@@ -19,6 +19,10 @@ services:
   telemetry:
     build: ./telemetry
     ports: ["8080:8080"]
+    volumes:
+      - "./telemetry/data:/app/data"
+      - "./telemetry/app:/app/app"
+      - "./telemetry/analysis:/app/analysis"
 
   server:
     build: ./server

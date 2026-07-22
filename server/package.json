@@ -1,5 +1,29 @@
 {
   "name": "@tappay/server",
   "version": "0.0.0",
-  "private": true
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenv -e ../.env -- tsx watch src/index.ts",
+    "migrate": "dotenv -e ../.env -- node-pg-migrate up",
+    "migrate:down": "dotenv -e ../.env -- node-pg-migrate down",
+    "migrate:create": "node-pg-migrate create",
+    "seed": "dotenv -e ../.env -- tsx scripts/seed.ts",
+    "test": "dotenv -e ../.env -- vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tappay/shared": "workspace:*",
+    "kysely": "^0.27.6",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.11",
+    "dotenv-cli": "^8.0.0",
+    "node-pg-migrate": "^7.9.1",
+    "tsx": "^4.19.2",
+    "typescript": "~5.7.3",
+    "vitest": "^3.0.5"
+  }
 }
