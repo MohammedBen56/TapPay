@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Native Android build stays out of CI (needs the SDK, heavy) -- this job
+    # covers server + shared TS lint/test only, per the M1 plan.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tappay
+          POSTGRES_USER: tappay
+          POSTGRES_PASSWORD: tappay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://tappay:tappay@localhost:5432/tappay
+      SERVER_PORT: 3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (server + shared -- mobile has no lint script yet, pnpm -r skips it)
+        run: pnpm -r lint
+
+      - name: Run server migrations
+        run: pnpm --filter server migrate
+
+      - name: Test shared
+        run: pnpm --filter @tappay/shared test
+
+      - name: Test server
+        run: pnpm --filter server test
