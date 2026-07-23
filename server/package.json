@@ -9,6 +9,7 @@
     "migrate:down": "dotenv -e ../.env -- node-pg-migrate down",
     "migrate:create": "node-pg-migrate create",
     "seed": "dotenv -e ../.env -- tsx scripts/seed.ts",
+    "generate-server-key": "tsx scripts/generate-server-key.ts",
     "test": "dotenv -e ../.env -- vitest run",
     "lint": "tsc --noEmit"
   },
