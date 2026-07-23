@@ -41,10 +41,10 @@ export function registerDeviceRoutes(app: FastifyInstance): void {
       });
     }
 
-    const verification = verifyAttestationChain(attestationChainDer, challenge);
-
     const deviceIdBytes = Buffer.from(uuidToBytes(device_id));
     const identityPubkeyBytes = Buffer.from(identity_pubkey, "base64");
+
+    const verification = verifyAttestationChain(attestationChainDer, challenge, identityPubkeyBytes);
 
     const accountId = await db.transaction().execute(async (trx) => {
       const existing = await trx

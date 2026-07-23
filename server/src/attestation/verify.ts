@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { OctetString, fromBER } from "asn1js";
 import { Certificate } from "pkijs";
 import { config } from "../config.js";
+import { compressedPublicKeyFromKeyObject } from "../crypto/ecPublicKey.js";
 
 /** OID for the Android Key Attestation extension (KeyDescription), present on
  * the leaf certificate of a hardware attestation chain. */
@@ -80,21 +81,29 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 /**
  * Verifies an Android Key Attestation certificate chain (leaf first) up to a
- * pinned Google root, and confirms the leaf's attestationChallenge matches the
- * nonce this server issued for the enrollment. Fails closed: any parse error,
- * broken signature link, untrusted root, or challenge mismatch returns
- * `ok: false` -- attestation_ok in the devices table is only ever set from
- * this function's result, never assumed true (spec §2.5).
+ * pinned Google root, confirms the leaf's attestationChallenge matches the
+ * nonce this server issued for the enrollment, AND confirms the leaf
+ * certificate's own public key matches `expectedIdentityPubkey` -- the key the
+ * client is asking to enroll. Without that last check, `attestation_chain` and
+ * `identity_pubkey` are two independent, uncorrelated request fields: a client
+ * could submit one legitimately-obtained hardware-attested chain alongside an
+ * arbitrary, software-generated (fully exportable, non-biometric-gated)
+ * `identity_pubkey` and have it marked attested. Fails closed: any parse
+ * error, broken signature link, untrusted root, challenge mismatch, or
+ * pubkey mismatch returns `ok: false` -- attestation_ok in the devices table
+ * is only ever set from this function's result, never assumed true (spec
+ * §2.5).
  *
  * Deliberately scoped down from "verify every attestation extension field":
- * chain validity + challenge match is the MVP gate. Deeper policy
- * (verified-boot state, patch-level freshness, and revocation checking against
- * Google's key-attestation status list -- a revoked key currently passes this
- * gate) is a named, known gap, not required for the M1 exit gate.
+ * chain validity + challenge match + pubkey binding is the MVP gate. Deeper
+ * policy (verified-boot state, patch-level freshness, and revocation checking
+ * against Google's key-attestation status list -- a revoked key currently
+ * passes this gate) is a named, known gap, not required for the M1 exit gate.
  */
 export function verifyAttestationChain(
   derChainLeafFirst: Uint8Array[],
   expectedChallenge: Uint8Array,
+  expectedIdentityPubkey: Uint8Array,
   // Injectable for tests only -- production callers (M1 Step 8) never pass
   // this and get the real pinned Google roots. Without this seam, tests can
   // only ever prove "everything is rejected", never that a genuinely valid
@@ -138,6 +147,17 @@ export function verifyAttestationChain(
   }
   if (!constantTimeEqual(challenge, expectedChallenge)) {
     return { ok: false, reason: "attestation challenge does not match the issued enrollment nonce" };
+  }
+
+  const leaf = certs[0]!;
+  let leafPubkey: Uint8Array;
+  try {
+    leafPubkey = compressedPublicKeyFromKeyObject(leaf.publicKey);
+  } catch (e) {
+    return { ok: false, reason: `leaf certificate public key is not a usable P-256 key: ${(e as Error).message}` };
+  }
+  if (!constantTimeEqual(leafPubkey, expectedIdentityPubkey)) {
+    return { ok: false, reason: "leaf certificate public key does not match the submitted identity_pubkey" };
   }
 
   return { ok: true };
