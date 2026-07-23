@@ -1,0 +1,28 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.tappay'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.tappay"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "androidx.core:core-ktx:1.13.1"
+  // BiometricPrompt + CryptoObject, for gating KeyStoreManager's signing calls.
+  implementation "androidx.biometric:biometric:1.1.0"
+  // KeyStoreManager references FragmentActivity directly; the host app's
+  // ReactActivity already extends it transitively, but the module's own
+  // compilation unit needs it on its own classpath too.
+  implementation "androidx.fragment:fragment-ktx:1.8.5"
+}

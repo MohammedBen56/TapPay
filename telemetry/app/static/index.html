@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TapPay Telemetry Harness</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #111; color: #eee; }
+  h1 { font-size: 1.1rem; font-weight: 600; }
+  #status { font-size: 0.85rem; color: #9ac; margin-bottom: 1rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 0.75rem; }
+  .card h2 { font-size: 0.9rem; margin: 0 0 0.5rem; color: #ccc; }
+  canvas { max-height: 220px; }
+  #markers { max-height: 160px; overflow-y: auto; font-size: 0.8rem; font-family: ui-monospace, monospace; }
+  #markers div { padding: 2px 0; border-bottom: 1px solid #2a2a2a; }
+</style>
+</head>
+<body>
+<h1>TapPay Telemetry Harness</h1>
+<div id="status">connecting…</div>
+<div class="grid">
+  <div class="card"><h2>Accel magnitude (g)</h2><canvas id="chart-accel"></canvas></div>
+  <div class="card"><h2>Gyro magnitude (rad/s)</h2><canvas id="chart-gyro"></canvas></div>
+  <div class="card"><h2>Mag magnitude (µT)</h2><canvas id="chart-mag"></canvas></div>
+  <div class="card"><h2>RSSI (dBm)</h2><canvas id="chart-rssi"></canvas></div>
+</div>
+<div class="card" style="margin-top: 1.5rem;">
+  <h2>Bump markers</h2>
+  <div id="markers"></div>
+</div>
+
+<script>
+const MAX_POINTS = 200;
+const ROLE_COLORS = { A: "#4ea8ff", B: "#ff8a4e" };
+
+function makeChart(canvasId, yLabel) {
+  const ctx = document.getElementById(canvasId).getContext("2d");
+  return new Chart(ctx, {
+    type: "line",
+    data: {
+      datasets: [
+        { label: "Phone A", data: [], borderColor: ROLE_COLORS.A, borderWidth: 1.5, pointRadius: 0, tension: 0.15 },
+        { label: "Phone B", data: [], borderColor: ROLE_COLORS.B, borderWidth: 1.5, pointRadius: 0, tension: 0.15 },
+      ],
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      parsing: false,
+      scales: {
+        x: { type: "linear", ticks: { color: "#888" }, grid: { color: "#222" } },
+        y: { title: { display: true, text: yLabel, color: "#888" }, ticks: { color: "#888" }, grid: { color: "#222" } },
+      },
+      plugins: { legend: { labels: { color: "#ccc" } } },
+    },
+  });
+}
+
+const charts = {
+  accel: makeChart("chart-accel", "g"),
+  gyro: makeChart("chart-gyro", "rad/s"),
+  mag: makeChart("chart-mag", "µT"),
+  rssi: makeChart("chart-rssi", "dBm"),
+};
+
+function roleIndex(role) { return role === "A" ? 0 : 1; }
+
+function pushPoint(chart, role, x, y) {
+  const ds = chart.data.datasets[roleIndex(role)].data;
+  ds.push({ x, y });
+  if (ds.length > MAX_POINTS) ds.shift();
+  chart.update("none");
+}
+
+function magnitude(v) { return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+
+let currentSession = null;
+
+function handleRecord(record) {
+  if (record.session_id && record.session_id !== currentSession) {
+    currentSession = record.session_id;
+    document.getElementById("status").textContent = "session: " + currentSession;
+  }
+  const xBase = record.t_server_ns / 1e6; // ms, dashboard-side reference clock only
+
+  if (record.type === "sensor_batch") {
+    for (const s of record.samples) {
+      pushPoint(charts.accel, record.device_role, xBase, magnitude(s.accel) / 9.80665);
+      pushPoint(charts.gyro, record.device_role, xBase, magnitude(s.gyro));
+      pushPoint(charts.mag, record.device_role, xBase, magnitude(s.mag));
+    }
+  } else if (record.type === "rssi_sample") {
+    pushPoint(charts.rssi, record.device_role, xBase, record.dbm);
+  } else if (record.type === "bump_marker") {
+    const el = document.createElement("div");
+    const tag = record.tag || {};
+    el.textContent = `[${new Date().toLocaleTimeString()}] role=${record.device_role} grip=${tag.grip ?? "-"} orientation=${tag.orientation ?? "-"} contact=${tag.contact_point ?? "-"}`;
+    const markers = document.getElementById("markers");
+    markers.prepend(el);
+    while (markers.children.length > 50) markers.removeChild(markers.lastChild);
+  }
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/dashboard`);
+  ws.onopen = () => { document.getElementById("status").textContent = "connected, waiting for data…"; };
+  ws.onclose = () => { document.getElementById("status").textContent = "disconnected, retrying…"; setTimeout(connect, 1500); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    try { handleRecord(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
