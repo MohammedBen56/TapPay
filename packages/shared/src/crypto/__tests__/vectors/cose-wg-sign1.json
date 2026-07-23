@@ -1,0 +1,24 @@
+{
+ "source": "https://github.com/cose-wg/Examples sign1-tests/ (trimmed)",
+ "vectors": [
+  {
+   "name": "sign-pass-03",
+   "title": "sign-pass-03: Remove CBOR Tag",
+   "plaintext": "This is the content.",
+   "coseSign1Hex": "8443A10126A10442313154546869732069732074686520636F6E74656E742E58408EB33E4CA31D1C465AB05AAC34CC6B23D58FEF5C083106C4D25A91AEF0B0117E2AF9A291AA32E14AB834DC56ED2A223444547E01F11D3B0916E5A4C345CACB36",
+   "uncompressedPublicKeyHex": "04bac5b11cad8f99f9c72b05cf4b9e26d244dc189f745228255a219a86d6a09eff20138bf82dc1b6d562be0fa54ab7804a3a64b6d72ccfed6b6fb6ed28bbfc117e",
+   "expectValid": true
+  },
+  {
+   "name": "sign-fail-02",
+   "title": "sign-fail-02: Change signature",
+   "plaintext": "This is the content.",
+   "coseSign1Hex": "D28443A10126A10442313154546869732069732074686520636F6E74656E742F58408EB33E4CA31D1C465AB05AAC34CC6B23D58FEF5C083106C4D25A91AEF0B0117E2AF9A291AA32E14AB834DC56ED2A223444547E01F11D3B0916E5A4C345CACB36",
+   "uncompressedPublicKeyHex": "04bac5b11cad8f99f9c72b05cf4b9e26d244dc189f745228255a219a86d6a09eff20138bf82dc1b6d562be0fa54ab7804a3a64b6d72ccfed6b6fb6ed28bbfc117e",
+   "expectValid": false
+  }
+ ],
+ "excluded": {
+  "sign-pass-01": "Its displayed protected header (bstr wrapping an empty map, 0x41A0) does not match what was actually signed (a genuinely zero-length protected bstr, 0x40) -- confirmed by direct signature verification against both candidate Sig_structures. A spec-compliant, byte-preserving verifier (RFC 8152 SS4.4: reconstruct from the protected bytes as received, never re-derive or normalize them) correctly rejects this vector. Excluded rather than accommodated with nonstandard leniency."
+ }
+}
