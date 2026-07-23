@@ -43,6 +43,10 @@ export const config = {
   /** Path to the pinned Android hardware attestation root certs (Step 7). */
   attestationGoogleRootsPath: process.env.ATTESTATION_GOOGLE_ROOTS_PATH ?? "src/attestation/google-roots.pem",
 
+  /** How long an issued enrollment nonce (attestation challenge) stays valid
+   * and unconsumed before GET /devices/enroll/nonce must be called again. */
+  enrollmentNonceTtlMs: envInt("ENROLLMENT_NONCE_TTL_MS", 5 * 60_000),
+
   /** Server's own COSE_Sign1 identity key (Step 5), gitignored. */
   serverIdentityKeyPath: process.env.SERVER_IDENTITY_KEY_PATH ?? "keys/server_identity.pem",
 } as const;
