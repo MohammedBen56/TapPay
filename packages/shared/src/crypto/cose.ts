@@ -45,6 +45,30 @@ export interface VerifiedCoseSign1 {
   signature: Uint8Array;
 }
 
+function decodeCoseSign1Structure(coseBytes: Uint8Array): [Uint8Array, unknown, Uint8Array, Uint8Array] {
+  let decoded: unknown = structureCodec.decode(coseBytes);
+  if (decoded instanceof Tag && decoded.tag === 18) {
+    decoded = decoded.value;
+  }
+  if (!Array.isArray(decoded) || decoded.length !== 4) {
+    throw new Error("malformed COSE_Sign1: expected a 4-element array");
+  }
+  return decoded as [Uint8Array, unknown, Uint8Array, Uint8Array];
+}
+
+/**
+ * Decodes the outer COSE_Sign1 container WITHOUT checking the signature.
+ * UNTRUSTED -- the only legitimate use is reading routing metadata (e.g.
+ * TxProposal.sender_device_id) needed to look up which public key to verify
+ * against in the first place, the same "read kid, then verify" pattern JWT
+ * libraries use. Nothing read this way may be acted on, persisted, or used to
+ * move money -- only verifyCoseSign1's return value is trustworthy.
+ */
+export function decodeCoseSign1Unverified(coseBytes: Uint8Array): { payload: Uint8Array } {
+  const [, , payload] = decodeCoseSign1Structure(coseBytes);
+  return { payload };
+}
+
 /**
  * Verifies a COSE_Sign1 structure and returns its payload bytes -- ONLY if the
  * signature is valid; returns null otherwise. Tolerates an optional leading
@@ -60,14 +84,7 @@ export interface VerifiedCoseSign1 {
  * never before or as a substitute for verification.
  */
 export function verifyCoseSign1(coseBytes: Uint8Array, publicKey: Uint8Array): VerifiedCoseSign1 | null {
-  let decoded: unknown = structureCodec.decode(coseBytes);
-  if (decoded instanceof Tag && decoded.tag === 18) {
-    decoded = decoded.value;
-  }
-  if (!Array.isArray(decoded) || decoded.length !== 4) {
-    throw new Error("malformed COSE_Sign1: expected a 4-element array");
-  }
-  const [protectedHeaderBytes, , payload, signature] = decoded as [Uint8Array, unknown, Uint8Array, Uint8Array];
+  const [protectedHeaderBytes, , payload, signature] = decodeCoseSign1Structure(coseBytes);
 
   const sigStructure = buildSigStructure(protectedHeaderBytes, payload);
   const ok = verifyEcdsaP256(sigStructure, signature, publicKey);
