@@ -1,6 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import sensible from "@fastify/sensible";
 import { registerDeviceRoutes } from "./routes/devices.js";
+import { registerTxRoutes } from "./routes/tx.js";
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({ logger: true });
@@ -9,6 +10,7 @@ export function buildApp(): FastifyInstance {
   app.get("/health", async () => ({ status: "ok" }));
 
   registerDeviceRoutes(app);
+  registerTxRoutes(app);
 
   // Errors are typed and surfaced, never swallowed (CLAUDE.md §8): logs the full
   // error server-side and returns a structured body, rather than Fastify's bare
