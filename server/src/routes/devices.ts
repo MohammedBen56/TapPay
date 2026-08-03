@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { consumeNonce, issueNonce } from "../attestation/nonceStore.js";
 import { extractAttestationChallenge, verifyAttestationChain } from "../attestation/verify.js";
+import { signFreshnessToken } from "../crypto/serverSigner.js";
 import { db } from "../db/kysely.js";
 
 const enrollBodySchema = z.object({
@@ -93,5 +94,37 @@ export function registerDeviceRoutes(app: FastifyInstance): void {
     }
 
     return reply.send({ account_id: accountId, device_id, attestation_ok: true });
+  });
+
+  // M2: issues a server-signed proof of "this device reached the server at
+  // issued_at" -- the precondition spec §5 requires before a Mode C offline send
+  // ("payer holds a freshness_token issued within 24h"). Unauthenticated beyond
+  // enrollment, same posture as GET /tx/:txUuid/receipt: this token attests
+  // recency only, it doesn't authorize spending -- the IOU's own signature does
+  // that, verified separately at /tx/sync.
+  app.get("/devices/:deviceId/freshness-token", async (request, reply) => {
+    const { deviceId } = request.params as { deviceId: string };
+    const deviceIdParsed = z.string().uuid().safeParse(deviceId);
+    if (!deviceIdParsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: "deviceId must be a UUID" });
+    }
+
+    const deviceIdBytes = Buffer.from(uuidToBytes(deviceId));
+    const device = await db
+      .selectFrom("devices")
+      .select(["attestation_ok"])
+      .where("device_id", "=", deviceIdBytes)
+      .executeTakeFirst();
+    if (!device) {
+      return reply.status(404).send({ error: "UnknownDevice", message: "device is not enrolled" });
+    }
+    if (!device.attestation_ok) {
+      // Fail closed, same gate /tx/submit uses: an unverified device gets no
+      // proof of recency to build an offline send on top of.
+      return reply.status(403).send({ error: "UnverifiedDevice", message: "device attestation was not verified" });
+    }
+
+    const token = await signFreshnessToken(deviceIdBytes);
+    return reply.send({ token: Buffer.from(token).toString("base64") });
   });
 }

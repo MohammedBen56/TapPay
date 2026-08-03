@@ -33,6 +33,9 @@ export interface DevicesTable {
   attestation_blob: unknown;
   attestation_ok: Generated<boolean>;
   last_seq: Generated<bigint>;
+  /** Set by /tx/sync (M2) on the first detected sequence regression -- an audit
+   * signal, not an automatic freeze. NULL means never flagged. */
+  rollback_flagged_at: Date | null;
   enrolled_at: Generated<Date>;
 }
 
@@ -65,7 +68,12 @@ export interface ReservationsTable {
   counterparty_account_id: string | null;
 }
 
-export type OfflineIntentStatus = "PENDING" | "SETTLED" | "FAILED_INSUFFICIENT" | "FAILED_EXPIRED";
+export type OfflineIntentStatus =
+  | "PENDING"
+  | "SETTLED"
+  | "FAILED_INSUFFICIENT"
+  | "FAILED_EXPIRED"
+  | "FAILED_SEQUENCE_REGRESSION";
 
 export interface OfflineIntentsTable {
   tx_uuid: string;

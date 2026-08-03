@@ -4,28 +4,11 @@ import { z } from "zod";
 import { bankAdapter } from "../adapters/index.js";
 import { config } from "../config.js";
 import { db } from "../db/kysely.js";
+import { findDeviceAccount } from "./deviceLookup.js";
 
 const txSubmitBodySchema = z.object({
   cose_sign1: z.string(), // base64
 });
-
-async function findDeviceAccount(deviceIdBytes: Buffer) {
-  const device = await db
-    .selectFrom("devices")
-    .select(["user_id", "identity_pubkey", "attestation_ok"])
-    .where("device_id", "=", deviceIdBytes)
-    .executeTakeFirst();
-  if (!device) return null;
-
-  const account = await db
-    .selectFrom("accounts")
-    .select(["account_id", "currency"])
-    .where("user_id", "=", device.user_id)
-    .executeTakeFirst();
-  if (!account) return null;
-
-  return { device, account };
-}
 
 export function registerTxRoutes(app: FastifyInstance): void {
   app.get("/accounts/:accountId/balance", async (request, reply) => {
@@ -108,6 +91,13 @@ export function registerTxRoutes(app: FastifyInstance): void {
     const recipientLookup = await findDeviceAccount(Buffer.from(proposal.recipient_device_id));
     if (!recipientLookup) {
       return reply.status(404).send({ error: "UnknownRecipient", message: "recipient device is not enrolled" });
+    }
+
+    if (senderLookup.account.account_id === recipientLookup.account.account_id) {
+      // journal's UNIQUE (tx_uuid, account_id) makes a self-transfer structurally
+      // impossible to double-journal -- reject explicitly instead of letting the
+      // constraint violation surface as an unhandled 500 from transfer() below.
+      return reply.status(400).send({ error: "SelfPayment", message: "sender and recipient resolve to the same account" });
     }
 
     const txUuid = bytesToUuid(proposal.tx_uuid);
