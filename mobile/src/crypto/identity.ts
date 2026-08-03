@@ -55,6 +55,24 @@ export async function enrollDevice(email: string): Promise<EnrolledIdentity> {
 }
 
 /**
+ * Fetches a fresh server-signed freshness token (M2, GET /devices/:id/freshness-
+ * token) -- the precondition spec §5 requires before a Mode C offline send
+ * ("payer holds a freshness_token issued within 24h"). Call this opportunistic-
+ * ally whenever online (e.g. right after enrollment, or before going offline)
+ * and cache the result locally; OfflineScreen.tsx checks the cached token's age
+ * client-side before allowing an offline send, and the server independently
+ * re-verifies it at /tx/sync time -- this call itself does no local caching.
+ */
+export async function fetchFreshnessToken(deviceId: string): Promise<string> {
+  const res = await fetch(`${SERVER_BASE_URL}/devices/${deviceId}/freshness-token`);
+  if (!res.ok) {
+    throw new Error(`failed to fetch freshness token: ${res.status}`);
+  }
+  const { token } = (await res.json()) as { token: string };
+  return token;
+}
+
+/**
  * A `packages/shared` `Signer` bound to one enrolled device's hardware key --
  * shows a system biometric prompt on every call. Android's Signature API
  * returns a DER-encoded signature; COSE wants raw r||s, hence the conversion
