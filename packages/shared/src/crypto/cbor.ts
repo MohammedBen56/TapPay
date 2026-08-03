@@ -1,5 +1,5 @@
 import { Encoder } from "cbor-x";
-import type { TxProposal, TxReceipt } from "../types.js";
+import type { FreshnessToken, IncomingIouInfo, OfflineIou, TxProposal, TxReceipt } from "../types.js";
 
 /**
  * A dedicated Encoder instance (not cbor-x's shared default) so unrelated global
@@ -70,4 +70,72 @@ export function decodeTxReceipt(bytes: Uint8Array): TxReceipt {
     amount: BigInt(amount),
     currency,
   };
+}
+
+/** Mode C's IOU payload -- see OfflineIou's doc comment (types.ts) for why the
+ * field order matches spec §5's 5-field list plus the two device-id fields
+ * TxProposal already establishes the pattern for. Field order is the wire
+ * contract, same rule as TX_PROPOSAL_FIELD_ORDER above. */
+const OFFLINE_IOU_FIELD_ORDER = [
+  "tx_uuid",
+  "sender_device_id",
+  "recipient_device_id",
+  "amount",
+  "currency",
+  "seq",
+  "ts",
+] as const;
+
+export function encodeOfflineIou(iou: OfflineIou): Uint8Array {
+  return cborCodec.encode(OFFLINE_IOU_FIELD_ORDER.map((key) => iou[key]));
+}
+
+export function decodeOfflineIou(bytes: Uint8Array): OfflineIou {
+  const decoded = cborCodec.decode(bytes);
+  if (!Array.isArray(decoded) || decoded.length !== OFFLINE_IOU_FIELD_ORDER.length) {
+    throw new Error("malformed OfflineIou CBOR: expected a 7-element array");
+  }
+  const [tx_uuid, sender_device_id, recipient_device_id, amount, currency, seq, ts] = decoded;
+  return {
+    tx_uuid,
+    sender_device_id,
+    recipient_device_id,
+    amount: BigInt(amount),
+    currency,
+    seq: BigInt(seq),
+    ts: Number(ts),
+  };
+}
+
+const FRESHNESS_TOKEN_FIELD_ORDER = ["device_id", "issued_at"] as const;
+
+export function encodeFreshnessToken(token: FreshnessToken): Uint8Array {
+  return cborCodec.encode(FRESHNESS_TOKEN_FIELD_ORDER.map((key) => token[key]));
+}
+
+export function decodeFreshnessToken(bytes: Uint8Array): FreshnessToken {
+  const decoded = cborCodec.decode(bytes);
+  if (!Array.isArray(decoded) || decoded.length !== FRESHNESS_TOKEN_FIELD_ORDER.length) {
+    throw new Error("malformed FreshnessToken CBOR: expected a 2-element array");
+  }
+  const [device_id, issued_at] = decoded;
+  return { device_id, issued_at: Number(issued_at) };
+}
+
+/** Unsigned by design -- see IncomingIouInfo's doc comment (types.ts). Field
+ * order is still a real wire contract even though it's not cryptographically
+ * bound to anything, so a payee's QR scanner always decodes it the same way. */
+const INCOMING_IOU_INFO_FIELD_ORDER = ["tx_uuid", "sender_device_id", "amount", "currency"] as const;
+
+export function encodeIncomingIouInfo(info: IncomingIouInfo): Uint8Array {
+  return cborCodec.encode(INCOMING_IOU_INFO_FIELD_ORDER.map((key) => info[key]));
+}
+
+export function decodeIncomingIouInfo(bytes: Uint8Array): IncomingIouInfo {
+  const decoded = cborCodec.decode(bytes);
+  if (!Array.isArray(decoded) || decoded.length !== INCOMING_IOU_INFO_FIELD_ORDER.length) {
+    throw new Error("malformed IncomingIouInfo CBOR: expected a 4-element array");
+  }
+  const [tx_uuid, sender_device_id, amount, currency] = decoded;
+  return { tx_uuid, sender_device_id, amount: BigInt(amount), currency };
 }
