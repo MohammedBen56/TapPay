@@ -49,4 +49,9 @@ export const config = {
 
   /** Server's own COSE_Sign1 identity key (Step 5), gitignored. */
   serverIdentityKeyPath: process.env.SERVER_IDENTITY_KEY_PATH ?? "keys/server_identity.pem",
+
+  /** How long a GET /devices/:id/freshness-token stays valid for a Mode C offline
+   * send (M2, spec §5: "payer holds a freshness_token issued within 24h"). Checked
+   * at /tx/sync against the token's issued_at vs. the IOU's own ts. */
+  offlineFreshnessTokenTtlMs: envInt("OFFLINE_FRESHNESS_TOKEN_TTL_MS", 24 * 60 * 60_000),
 } as const;

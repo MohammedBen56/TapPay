@@ -29,6 +29,23 @@ export async function lockAccount(trx: Transaction<Database>, accountId: string)
 }
 
 /**
+ * Locks one device row (SELECT ... FOR UPDATE) -- the serialization point for
+ * /tx/sync's last_seq / rollback_flagged_at updates. Same reasoning as
+ * lockAccount: without this, two concurrent syncs from the same device could
+ * both read the same last_seq before either's advance is visible, letting a
+ * replayed seq slip past the check it's supposed to fail.
+ */
+export async function lockDevice(trx: Transaction<Database>, deviceId: Buffer): Promise<void> {
+  const row = await trx
+    .selectFrom("devices")
+    .select("device_id")
+    .where("device_id", "=", deviceId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!row) throw new Error(`unknown device: ${deviceId.toString("hex")}`);
+}
+
+/**
  * Locks two account rows, always in lexicographical account_id order, so
  * concurrent transfers touching the same pair (in either direction) serialize
  * instead of deadlocking. This is the mechanism ADV-06 (100 concurrent
