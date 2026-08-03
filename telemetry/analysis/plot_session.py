@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
-    streams, bump_markers = load_session(args.session_file)
+    streams, bump_markers, _bump_detections = load_session(args.session_file)
     if not streams:
         raise SystemExit("no sensor_batch data found in this session")
 
@@ -143,8 +143,12 @@ def main() -> None:
             continue
         idx = np.argmin(np.abs(role_t_server_masked[marker_role] - marker["t_server_ns"]))
         t_marker = role_t_rel[marker_role][idx]
+        # Colored by the recording phone's own ROLE_COLORS entry, same as its sensor
+        # trace -- previously every marker was the same red regardless of role, so
+        # telling A's bump presses from B's meant cross-referencing the raw JSONL.
+        marker_color = ROLE_COLORS.get(marker_role, "#e53e3e")
         for ax in axes:
-            ax.axvline(t_marker, color="#e53e3e", linestyle="--", linewidth=1, alpha=0.7)
+            ax.axvline(t_marker, color=marker_color, linestyle="--", linewidth=1, alpha=0.7)
 
     axes[0].legend(loc="upper right", fontsize=8)
     axes[-1].set_xlabel("time (s, relative to window start)")

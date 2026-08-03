@@ -1,14 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { HIGH_PASS_ALPHA, getThresholdsForDevice } from '../config/sensorThresholds';
 import { onRssiSample, onSensorBatch, requestPermissions, startStreaming, stopStreaming } from '../native/TapPayNative';
-import { TelemetryClient, type BumpTag, type DeviceRole } from '../telemetry/TelemetryClient';
+import type { SensorSample, Vec3 } from '../native/TapPayNative';
+import { TelemetryClient, type BumpTag, type ConnectionStatus, type DeviceRole } from '../telemetry/TelemetryClient';
 import { uuidv4 } from '../util/uuid';
 
 const GRAVITY = 9.80665;
 const GRIPS = ['firm', 'loose'];
 const ORIENTATIONS = ['face-up', 'face-down', 'edge-on'];
 const CONTACT_POINTS = ['top-edge', 'back-center', 'corner'];
+// How long the "BUMP DETECTED" indicator stays lit, and how long detection is
+// suppressed afterward -- a real bump is a single sharp transient that stays above
+// threshold across several consecutive 100Hz samples, so without this the single
+// physical event would otherwise fire many times in a row.
+const BUMP_COOLDOWN_MS = 1200;
+
+/** Same recursive filter as compute_correlation.py's highpass_accel, run sample-by-
+ * sample on-device instead of over a whole recorded array -- lets the live detector
+ * use the exact math the peakAccelMinG thresholds were calibrated against, not an
+ * approximation of it. `prevRaw`/`prevFiltered` are the filter's carried state;
+ * pass null prevRaw for the very first sample (filtered defined as 0 there, matching
+ * the offline implementation's filtered[0] = 0). */
+function highpassStep(raw: Vec3, prevRaw: Vec3 | null, prevFiltered: Vec3): Vec3 {
+  if (!prevRaw) return [0, 0, 0];
+  return [
+    HIGH_PASS_ALPHA * (prevFiltered[0] + raw[0] - prevRaw[0]),
+    HIGH_PASS_ALPHA * (prevFiltered[1] + raw[1] - prevRaw[1]),
+    HIGH_PASS_ALPHA * (prevFiltered[2] + raw[2] - prevRaw[2]),
+  ];
+}
+
+function magnitude([x, y, z]: Vec3): number {
+  return Math.sqrt(x * x + y * y + z * z);
+}
 
 function SegmentedRow<T extends string>({
   label,
@@ -40,11 +66,13 @@ function SegmentedRow<T extends string>({
 }
 
 export default function TelemetryScreen() {
-  // Default targets the dev machine's LAN IP (mirrored WSL2 networking makes the
-  // Docker-hosted harness reachable there directly) so the phone can stream over
-  // WiFi without a USB tether during actual bump testing. Still editable in the UI
-  // if the machine's IP changes or you're back on adb reverse to localhost.
-  const [harnessHost, setHarnessHost] = useState('192.168.1.17:8080');
+  // Editable in the UI -- this WILL go stale whenever the dev machine's LAN IP
+  // changes (DHCP lease renewal, different network), and a stale/wrong host here
+  // fails *silently* from the phone's point of view (see the "harness" status
+  // readout below, which exists specifically to make that failure visible
+  // instead of "armed" quietly meaning nothing is actually being recorded). Use
+  // "localhost:8080" instead if you're on USB with `adb reverse tcp:8080 tcp:8080`.
+  const [harnessHost, setHarnessHost] = useState('192.168.1.23:8080');
   const [deviceRole, setDeviceRole] = useState<DeviceRole>('A');
   const [deviceId, setDeviceId] = useState(() => `phone-${uuidv4().slice(0, 8)}`);
   const [sessionId, setSessionId] = useState(() => uuidv4());
@@ -56,25 +84,73 @@ export default function TelemetryScreen() {
   const [lastAccelG, setLastAccelG] = useState<number | null>(null);
   const [lastRssiDbm, setLastRssiDbm] = useState<number | null>(null);
   const [markerCount, setMarkerCount] = useState(0);
+  const [harnessStatus, setHarnessStatus] = useState<ConnectionStatus | null>(null);
+  const [bumpDetected, setBumpDetected] = useState(false);
+  const [detectedBumpCount, setDetectedBumpCount] = useState(0);
+
+  // Platform.constants.Model is Build.MODEL on Android (e.g. "SM-S928B") -- the app
+  // is Android-only (CLAUDE.md S2), so no OS branch is needed beyond this guard.
+  const deviceModel = Platform.OS === 'android' ? (Platform.constants as { Model?: string }).Model ?? null : null;
+  const thresholds = useMemo(() => getThresholdsForDevice(deviceModel), [deviceModel]);
 
   const clientRef = useRef<TelemetryClient | null>(null);
   const tag = useMemo<BumpTag>(() => ({ grip, orientation, contactPoint }), [grip, orientation, contactPoint]);
   const tagRef = useRef(tag);
   tagRef.current = tag;
 
+  // Live bump-detector filter state, carried across sensor batches (see
+  // highpassStep) -- reset each time capture is (re-)armed, in the effect below.
+  const prevRawAccelRef = useRef<Vec3 | null>(null);
+  const prevFilteredAccelRef = useRef<Vec3>([0, 0, 0]);
+  const bumpCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const processSampleForBumpDetection = useCallback(
+    (sample: SensorSample) => {
+      const filtered = highpassStep(sample.accel, prevRawAccelRef.current, prevFilteredAccelRef.current);
+      prevRawAccelRef.current = sample.accel;
+      prevFilteredAccelRef.current = filtered;
+
+      const peakG = magnitude(filtered) / GRAVITY;
+      if (peakG >= thresholds.peakAccelMinG && !bumpCooldownRef.current) {
+        setBumpDetected(true);
+        setDetectedBumpCount((n) => n + 1);
+        clientRef.current?.sendBumpDetected(peakG, thresholds.peakAccelMinG);
+        bumpCooldownRef.current = setTimeout(() => {
+          setBumpDetected(false);
+          bumpCooldownRef.current = null;
+        }, BUMP_COOLDOWN_MS);
+      }
+    },
+    [thresholds],
+  );
+
   useEffect(() => {
     if (!armed) return;
 
-    const client = new TelemetryClient({
-      url: `ws://${harnessHost}/ws/ingest`,
-      sessionId,
-      deviceRole,
-      deviceId,
-    });
+    // Fresh filter/detector state each arm -- highpassStep's prevRaw=null case
+    // matches the offline pipeline's filtered[0]=0 starting condition, which
+    // assumes starting from rest at the beginning of a capture.
+    prevRawAccelRef.current = null;
+    prevFilteredAccelRef.current = [0, 0, 0];
+    setBumpDetected(false);
+    setDetectedBumpCount(0);
+
+    const client = new TelemetryClient(
+      {
+        url: `ws://${harnessHost}/ws/ingest`,
+        sessionId,
+        deviceRole,
+        deviceId,
+      },
+      setHarnessStatus,
+    );
     clientRef.current = client;
 
     const sensorSub = onSensorBatch((event) => {
       client.sendSensorBatch(event.samples, tagRef.current);
+      for (const sample of event.samples) {
+        processSampleForBumpDetection(sample);
+      }
       const last = event.samples[event.samples.length - 1];
       if (last) {
         const [x, y, z] = last.accel;
@@ -95,9 +171,14 @@ export default function TelemetryScreen() {
       stopStreaming().catch(() => {});
       client.close();
       clientRef.current = null;
+      setHarnessStatus(null);
+      if (bumpCooldownRef.current) {
+        clearTimeout(bumpCooldownRef.current);
+        bumpCooldownRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed, harnessHost, sessionId, deviceRole, deviceId]);
+  }, [armed, harnessHost, sessionId, deviceRole, deviceId, processSampleForBumpDetection]);
 
   const handleArmToggle = useCallback(async (next: boolean) => {
     if (next) {
@@ -149,11 +230,22 @@ export default function TelemetryScreen() {
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Session</Text>
-        <Text style={styles.sessionText}>{sessionId.slice(0, 8)}</Text>
+        <TextInput
+          style={[styles.input, styles.sessionText]}
+          value={sessionId}
+          onChangeText={setSessionId}
+          editable={!armed}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
         <TouchableOpacity style={styles.smallButton} onPress={handleNewSession} disabled={armed}>
           <Text style={styles.smallButtonText}>New</Text>
         </TouchableOpacity>
       </View>
+      <Text style={styles.hint}>
+        Both phones must use the identical session id to land in the same file for analysis -- generate it on one
+        phone, then copy/type it into the other before arming.
+      </Text>
 
       <SegmentedRow label="Grip" options={GRIPS} value={grip} onChange={setGrip} />
       <SegmentedRow label="Orientation" options={ORIENTATIONS} value={orientation} onChange={setOrientation} />
@@ -165,11 +257,33 @@ export default function TelemetryScreen() {
       </View>
 
       {permissionError && <Text style={styles.error}>{permissionError}</Text>}
+      {armed && harnessStatus !== 'open' && (
+        <Text style={styles.error}>
+          harness: {harnessStatus === 'connecting' ? 'connecting…' : 'disconnected, retrying…'} (nothing is reaching{' '}
+          {harnessHost} -- check the host/network)
+        </Text>
+      )}
+
+      {armed && (
+        <View style={[styles.bumpIndicator, bumpDetected && styles.bumpIndicatorActive]}>
+          <Text style={[styles.bumpIndicatorText, bumpDetected && styles.bumpIndicatorTextActive]}>
+            {bumpDetected ? 'BUMP DETECTED' : 'listening for bump…'}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.readout}>
+        <Text style={styles.readoutText}>
+          harness: {armed ? (harnessStatus === 'open' ? 'connected' : (harnessStatus ?? 'connecting')) : '--'}
+        </Text>
         <Text style={styles.readoutText}>accel: {lastAccelG !== null ? `${lastAccelG.toFixed(2)} g` : '--'}</Text>
         <Text style={styles.readoutText}>rssi: {lastRssiDbm !== null ? `${lastRssiDbm} dBm` : '--'}</Text>
         <Text style={styles.readoutText}>markers this session: {markerCount}</Text>
+        <Text style={styles.readoutText}>bumps detected this session: {detectedBumpCount}</Text>
+        <Text style={styles.readoutText}>
+          device: {deviceModel ?? 'unknown'} (threshold {thresholds.peakAccelMinG.toFixed(2)}g
+          {deviceModel && !['SM-S928B', 'SM-A515F'].includes(deviceModel) ? ', uncalibrated fallback' : ''})
+        </Text>
       </View>
 
       <TouchableOpacity style={[styles.markButton, !armed && styles.markButtonDisabled]} onPress={handleMarkBump} disabled={!armed}>
@@ -195,6 +309,11 @@ const styles = StyleSheet.create({
   segmentText: { color: '#aaa', fontSize: 12 },
   segmentTextActive: { color: '#111', fontWeight: '600' },
   error: { color: '#ff6b6b' },
+  hint: { color: '#777', fontSize: 12, marginTop: -6 },
+  bumpIndicator: { marginTop: 8, paddingVertical: 20, borderRadius: 10, alignItems: 'center', backgroundColor: '#1b1b1b', borderWidth: 2, borderColor: '#333' },
+  bumpIndicatorActive: { backgroundColor: '#1e4620', borderColor: '#3ddc55' },
+  bumpIndicatorText: { color: '#666', fontSize: 16, fontWeight: '700', letterSpacing: 1 },
+  bumpIndicatorTextActive: { color: '#3ddc55', fontSize: 20 },
   readout: { marginTop: 8, padding: 12, backgroundColor: '#1b1b1b', borderRadius: 8, gap: 4 },
   readoutText: { color: '#ccc', fontFamily: 'monospace' },
   markButton: { marginTop: 8, backgroundColor: '#ff8a4e', borderRadius: 8, paddingVertical: 14, alignItems: 'center' },

@@ -31,18 +31,19 @@ def render_sessions_index(sessions: list[dict]) -> str:
             f"<td>{', '.join(s['roles']) or '-'}</td>"
             f"<td>{s['sample_count']}</td>"
             f"<td>{s['marker_count']}</td>"
+            f"<td>{s['detection_count']}</td>"
             f"<td>{size_kb:.0f} KB</td>"
             f"<td>{mtime}</td>"
             f"</tr>"
         )
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='6'>No sessions captured yet.</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='7'>No sessions captured yet.</td></tr>"
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>TapPay Sessions</title><style>{PAGE_STYLE}</style></head>
 <body>
 <h1>Captured telemetry sessions</h1>
 <table>
-<thead><tr><th>Session</th><th>Roles</th><th>Samples</th><th>Markers</th><th>Size</th><th>Last updated</th></tr></thead>
+<thead><tr><th>Session</th><th>Roles</th><th>Samples</th><th>Markers</th><th>Detections</th><th>Size</th><th>Last updated</th></tr></thead>
 <tbody>
 {rows_html}
 </tbody>
@@ -67,9 +68,12 @@ def render_session_viewer(payload: dict) -> str:
 <h1>Session {session_id}</h1>
 <p class="note">Scroll/drag the bottom range slider to move through time; drag on any
 track to box-zoom (zooms all tracks together, they share one time axis). Double-click
-to reset zoom. Red markers = "Mark Bump" presses; hover a marker dot (top track) for
-its grip/orientation/contact tag. Note: with two phones, each trace uses its own
-device clock (unsynced until M3) -- shape comparison only, not cross-device timing.</p>
+to reset zoom. Triangle markers = "Mark Bump" presses (human-recorded); circle
+markers just below them = the on-device live detector actually firing -- colored and
+labeled by which phone recorded/detected them (same color as that phone's line).
+Hover either for details (grip/orientation/contact for a marker, peak/threshold g
+for a detection). Note: with two phones, each trace uses its own device clock
+(unsynced until M3) -- shape comparison only, not cross-device timing.</p>
 <div id="chart"></div>
 <script>
 const payload = {payload_json};
@@ -98,8 +102,12 @@ const layout = {{
   plot_bgcolor: "#111",
   font: {{ color: "#ccc" }},
   showlegend: true,
-  legend: {{ orientation: "h", y: 1.02 }},
-  margin: {{ t: 40, b: 80, l: 70, r: 30 }},
+  // yanchor "bottom" + a healthy gap above the row-0 title annotation (which sits
+  // right at the plot's top edge, y=1, per the annotation loop below) -- previously
+  // both the legend (y: 1.02) and that title occupied the same few pixels of a
+  // 40px top margin and rendered on top of each other.
+  legend: {{ orientation: "h", y: 1.1, yanchor: "bottom" }},
+  margin: {{ t: 90, b: 80, l: 70, r: 30 }},
 }};
 
 // Each row gets its OWN x-axis object (x, x2, x3, ...), linked via `matches` so they
@@ -164,25 +172,56 @@ layout.annotations = annotations;
 
 // Bump markers: a vertical line spanning the whole figure per marker, plus a
 // hoverable dot in the top track carrying the grip/orientation/contact tag.
+// Colored and split into one trace per device_role -- previously every marker
+// (line and dot alike) was the same red regardless of which phone recorded it,
+// so telling A's bumps from B's meant hovering each dot individually to read
+// the "role=" text. Same ROLE_COLORS as the sensor traces so a marker visually
+// matches its phone's line color at a glance, with its own legend entry too.
 layout.shapes = payload.markers.map((m) => ({{
   type: "line", xref: "x", yref: "paper",
   x0: m.t_rel_s, x1: m.t_rel_s, y0: 0, y1: 1,
-  line: {{ color: "#e53e3e", dash: "dash", width: 1 }},
+  line: {{ color: ROLE_COLORS[m.role] || "#e53e3e", dash: "dash", width: 1 }},
 }}));
 
-if (payload.markers.length > 0) {{
-  const topRowMax = Math.max(...Object.values(payload.roles).flatMap((d) => d.raw_accel_g), 1);
+const topRowMax = Math.max(...Object.values(payload.roles).flatMap((d) => d.raw_accel_g), 1);
+for (const role of Object.keys(payload.roles)) {{
+  const roleMarkers = payload.markers.filter((m) => m.role === role);
+  if (roleMarkers.length === 0) continue;
   traces.push({{
-    x: payload.markers.map((m) => m.t_rel_s),
-    y: payload.markers.map(() => topRowMax),
+    x: roleMarkers.map((m) => m.t_rel_s),
+    y: roleMarkers.map(() => topRowMax),
     type: "scatter",
     mode: "markers",
-    name: "Bump markers",
-    marker: {{ color: "#e53e3e", size: 9, symbol: "triangle-down" }},
-    text: payload.markers.map((m) => {{
+    name: `Bump marker (${{role}})`,
+    marker: {{ color: ROLE_COLORS[role] || "#e53e3e", size: 10, symbol: "triangle-down", line: {{ color: "#111", width: 1 }} }},
+    text: roleMarkers.map((m) => {{
       const tag = m.tag || {{}};
       return `role=${{m.role}} grip=${{tag.grip ?? "-"}} orientation=${{tag.orientation ?? "-"}} contact=${{tag.contact_point ?? "-"}}`;
     }}),
+    hoverinfo: "text+x",
+    xaxis: "x",
+    yaxis: "y",
+  }});
+}}
+
+// On-device live-detector fires (TelemetryClient.sendBumpDetected), plotted just
+// below the human "Mark Bump" triangles at a distinct symbol (circle) so the two
+// can be visually cross-checked against each other -- did the detector actually
+// fire near every real marker, or did some get missed / fire spuriously far from
+// any marker? That comparison was previously impossible from this page: a
+// detection firing live on the phone was never logged anywhere.
+const detectionRowY = topRowMax * 0.9;
+for (const role of Object.keys(payload.roles)) {{
+  const roleDetections = payload.detections.filter((d) => d.role === role);
+  if (roleDetections.length === 0) continue;
+  traces.push({{
+    x: roleDetections.map((d) => d.t_rel_s),
+    y: roleDetections.map(() => detectionRowY),
+    type: "scatter",
+    mode: "markers",
+    name: `Bump detected (${{role}})`,
+    marker: {{ color: ROLE_COLORS[role] || "#3ddc55", size: 9, symbol: "circle", line: {{ color: "#111", width: 1 }} }},
+    text: roleDetections.map((d) => `role=${{d.role}} peak=${{d.peak_g?.toFixed(2)}}g threshold=${{d.threshold_g?.toFixed(2)}}g`),
     hoverinfo: "text+x",
     xaxis: "x",
     yaxis: "y",

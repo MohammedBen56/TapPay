@@ -23,6 +23,7 @@ def list_sessions(data_dir: Path) -> list[dict]:
     for path in sorted(data_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
         roles: set[str] = set()
         marker_count = 0
+        detection_count = 0
         sample_count = 0
         with path.open() as f:
             for line in f:
@@ -35,6 +36,8 @@ def list_sessions(data_dir: Path) -> list[dict]:
                     roles.add(role)
                 if record.get("type") == "bump_marker":
                     marker_count += 1
+                elif record.get("type") == "bump_detected":
+                    detection_count += 1
                 elif record.get("type") == "sensor_batch":
                     sample_count += len(record.get("samples", []))
         sessions.append(
@@ -42,6 +45,7 @@ def list_sessions(data_dir: Path) -> list[dict]:
                 "session_id": path.stem,
                 "roles": sorted(roles),
                 "marker_count": marker_count,
+                "detection_count": detection_count,
                 "sample_count": sample_count,
                 "size_bytes": path.stat().st_size,
                 "mtime": path.stat().st_mtime,
@@ -62,26 +66,47 @@ def _role_payload(stream: RoleStream) -> dict:
     }
 
 
-def build_payload(session_file: Path) -> dict:
-    streams, bump_markers = load_session(session_file)
-
-    roles: dict[str, dict] = {role: _role_payload(stream) for role, stream in sorted(streams.items())}
-
-    markers = []
-    for marker in bump_markers:
-        role = marker.get("device_role")
+def _position_by_nearest_t_server(records: list[dict], streams: dict[str, RoleStream], roles: dict[str, dict]) -> list[dict]:
+    """Shared positioning logic for both bump_marker and bump_detected records: each
+    carries its own t_device_ns, but on a different, unrelated clock (JS Date.now()
+    for markers, also Date.now() for detections -- see TelemetryClient.sendBumpMarker
+    / sendBumpDetected) than the sensor stream's device clock. Position via nearest
+    t_server_ns match instead, same as plot_session.py.
+    """
+    positioned = []
+    for record in records:
+        role = record.get("device_role")
         stream = streams.get(role)
         if stream is None:
             continue
-        # Same caveat as plot_session.py: marker.t_device_ns uses a different clock
-        # (JS Date.now()) than the sensor stream's elapsedRealtimeNanos(), so position
-        # via nearest t_server_ns match instead of trusting the marker's own device_ns.
-        idx = int(np.argmin(np.abs(stream.t_server_ns - marker["t_server_ns"])))
+        idx = int(np.argmin(np.abs(stream.t_server_ns - record["t_server_ns"])))
         t_rel_s = roles[role]["t_rel_s"][idx]
-        markers.append({"role": role, "t_rel_s": t_rel_s, "tag": marker.get("tag", {})})
+        positioned.append({"role": role, "t_rel_s": t_rel_s, "record": record})
+    return positioned
+
+
+def build_payload(session_file: Path) -> dict:
+    streams, bump_markers, bump_detections = load_session(session_file)
+
+    roles: dict[str, dict] = {role: _role_payload(stream) for role, stream in sorted(streams.items())}
+
+    markers = [
+        {"role": p["role"], "t_rel_s": p["t_rel_s"], "tag": p["record"].get("tag", {})}
+        for p in _position_by_nearest_t_server(bump_markers, streams, roles)
+    ]
+    detections = [
+        {
+            "role": p["role"],
+            "t_rel_s": p["t_rel_s"],
+            "peak_g": p["record"].get("peak_g"),
+            "threshold_g": p["record"].get("threshold_g"),
+        }
+        for p in _position_by_nearest_t_server(bump_detections, streams, roles)
+    ]
 
     return {
         "session_id": session_file.stem,
         "roles": roles,
         "markers": markers,
+        "detections": detections,
     }
