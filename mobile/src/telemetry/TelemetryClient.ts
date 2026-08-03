@@ -17,6 +17,8 @@ export interface TelemetryClientOptions {
 
 const RECONNECT_DELAY_MS = 1500;
 
+export type ConnectionStatus = 'connecting' | 'open' | 'closed';
+
 function toWireTag(tag: BumpTag) {
   return { grip: tag.grip ?? null, orientation: tag.orientation ?? null, contact_point: tag.contactPoint ?? null };
 }
@@ -25,23 +27,44 @@ function toWireTag(tag: BumpTag) {
  * Thin WebSocket client to the telemetry harness's /ws/ingest endpoint. Queues
  * outgoing messages while disconnected and flushes on reconnect -- a dropped
  * connection during a bump session shouldn't silently lose samples.
+ *
+ * Connection failures (wrong host, unreachable network) previously failed
+ * silently: samples just queued forever with no way to tell "armed but
+ * nothing is reaching the server" from "armed and streaming". `onStatusChange`
+ * exists so the UI can surface that instead of leaving it invisible.
  */
 export class TelemetryClient {
   private ws: WebSocket | null = null;
   private queue: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  private status: ConnectionStatus = 'connecting';
 
-  constructor(private readonly options: TelemetryClientOptions) {
+  constructor(
+    private readonly options: TelemetryClientOptions,
+    private readonly onStatusChange?: (status: ConnectionStatus) => void,
+  ) {
     this.connect();
+  }
+
+  private setStatus(status: ConnectionStatus): void {
+    this.status = status;
+    this.onStatusChange?.(status);
   }
 
   private connect(): void {
     if (this.closed) return;
+    this.setStatus('connecting');
     const ws = new WebSocket(this.options.url);
     this.ws = ws;
-    ws.onopen = () => this.flushQueue();
-    ws.onclose = () => this.scheduleReconnect();
+    ws.onopen = () => {
+      this.setStatus('open');
+      this.flushQueue();
+    };
+    ws.onclose = () => {
+      this.setStatus('closed');
+      this.scheduleReconnect();
+    };
     ws.onerror = () => ws.close();
   }
 
@@ -89,6 +112,24 @@ export class TelemetryClient {
       t_device_ns: sample.t_device_ns,
       dbm: sample.dbm,
       peer_addr: sample.peerAddr,
+    });
+  }
+
+  /** Sent every time the on-device live detector (TelemetryScreen's
+   * processSampleForBumpDetection) actually fires -- distinct from
+   * sendBumpMarker (a human saying "a bump happened"), this is the detector
+   * self-reporting so a session's live-fire log can be checked against the
+   * human markers afterward, rather than trusting whoever was watching the
+   * screen during the test to have seen every flash. */
+  sendBumpDetected(peakG: number, thresholdG: number): void {
+    this.send({
+      type: 'bump_detected',
+      session_id: this.options.sessionId,
+      device_role: this.options.deviceRole,
+      device_id: this.options.deviceId,
+      t_device_ns: Date.now() * 1_000_000,
+      peak_g: peakG,
+      threshold_g: thresholdG,
     });
   }
 

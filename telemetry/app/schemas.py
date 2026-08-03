@@ -48,12 +48,29 @@ class BumpMarkerMessage(BaseModel):
     tag: BumpTag = Field(default_factory=BumpTag)
 
 
-IngestMessage = SensorBatchMessage | RssiSampleMessage | BumpMarkerMessage
+class BumpDetectedMessage(BaseModel):
+    """Sent by the on-device live detector (TelemetryScreen.tsx) every time its
+    threshold actually fires -- distinct from bump_marker (a human tap saying "a bump
+    happened here"). Having both logged lets a session be checked for whether the
+    live detector's fires actually line up with the human-recorded markers, instead
+    of relying on someone watching the phone screen during a fast multi-bump test."""
+
+    type: Literal["bump_detected"] = "bump_detected"
+    session_id: str
+    device_role: Literal["A", "B"]
+    device_id: str
+    t_device_ns: int
+    peak_g: float
+    threshold_g: float
+
+
+IngestMessage = SensorBatchMessage | RssiSampleMessage | BumpMarkerMessage | BumpDetectedMessage
 
 _MESSAGE_TYPES: dict[str, type[BaseModel]] = {
     "sensor_batch": SensorBatchMessage,
     "rssi_sample": RssiSampleMessage,
     "bump_marker": BumpMarkerMessage,
+    "bump_detected": BumpDetectedMessage,
 }
 
 

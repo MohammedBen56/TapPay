@@ -137,9 +137,17 @@ def correlate_grids(
 # --- Session loading + pairing pipeline ---
 
 
-def load_session(path: Path) -> tuple[dict[str, RoleStream], list[dict]]:
+def load_session(path: Path) -> tuple[dict[str, RoleStream], list[dict], list[dict]]:
+    """Returns (streams, bump_markers, bump_detections). bump_markers are human "Mark
+    Bump" taps; bump_detections are the on-device live detector's own self-reported
+    fires (TelemetryClient.sendBumpDetected) -- kept separate since they answer
+    different questions: did a bump happen here (marker) vs. did the live detector
+    actually catch it (detection). See templates.py for how a session viewer checks
+    one against the other.
+    """
     per_role_samples: dict[str, list[tuple]] = {"A": [], "B": []}
     bump_markers: list[dict] = []
+    bump_detections: list[dict] = []
 
     with path.open() as f:
         for line in f:
@@ -156,6 +164,8 @@ def load_session(path: Path) -> tuple[dict[str, RoleStream], list[dict]]:
                     )
             elif record.get("type") == "bump_marker":
                 bump_markers.append(record)
+            elif record.get("type") == "bump_detected":
+                bump_detections.append(record)
 
     streams: dict[str, RoleStream] = {}
     for role, rows in per_role_samples.items():
@@ -172,7 +182,7 @@ def load_session(path: Path) -> tuple[dict[str, RoleStream], list[dict]]:
         W = np.linalg.norm(gyro, axis=1)
         streams[role] = RoleStream(t_device, t_server, accel, gyro, mag, accel_filtered, A, W)
 
-    return streams, bump_markers
+    return streams, bump_markers, bump_detections
 
 
 def cluster_markers(bump_markers: list[dict], window_s: float) -> list[float]:
@@ -264,7 +274,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None, help="optional JSON report output path")
     args = parser.parse_args()
 
-    streams, bump_markers = load_session(args.session_file)
+    streams, bump_markers, _bump_detections = load_session(args.session_file)
     results = compute_bumps(streams, bump_markers, window_s=args.window_s)
 
     report = {"overall": summarize(results)}
