@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint (server + shared -- mobile has no lint script yet, pnpm -r skips it)
+      - name: Lint (server + shared + mobile; tsc --noEmit on each)
         run: pnpm -r lint
 
       - name: Run server migrations
