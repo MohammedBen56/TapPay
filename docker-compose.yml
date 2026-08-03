@@ -24,12 +24,10 @@ services:
       - "./telemetry/app:/app/app"
       - "./telemetry/analysis:/app/analysis"
 
-  server:
-    build: ./server
-    profiles: ["integration"]
-    env_file: .env
-    ports: ["3000:3000"]
-    depends_on: [db]
+# The server always runs on the host (pnpm --filter server dev), not in Docker
+# -- there is no server/Dockerfile. A `server` service under an `integration`
+# profile previously referenced `build: ./server`, which cannot build; removed
+# rather than left as a declared-but-broken profile. See CLAUDE.md §9.
 
 volumes:
   pgdata:
