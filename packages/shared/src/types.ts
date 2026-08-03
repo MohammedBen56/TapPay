@@ -73,3 +73,76 @@ export interface TxReceipt {
   amount: bigint;
   currency: string;
 }
+
+/**
+ * Mode C's signed IOU payload (spec §5: `{amount, recipient_id, tx_uuid, seq, ts}`).
+ * Field naming reconciled with TxProposal for consistency -- the spec's
+ * `recipient_id` and this project's existing `recipient_device_id` (TxProposal)
+ * refer to the same thing (a device_id resolved to an account server-side), so
+ * this uses `recipient_device_id` too rather than introducing a second name for
+ * an identical lookup pattern.
+ *
+ * `seq` is this device's per-signing-key monotonic counter (compared against
+ * `devices.last_seq` server-side at /tx/sync) -- the anti-rollback mechanism ADV-03
+ * exercises. It is NOT itself trusted client-side bookkeeping; only the server's
+ * tracked last_seq is authoritative.
+ *
+ * The freshness_token (a separate, server-signed FreshnessToken below) travels
+ * alongside this payload at /tx/sync, not inside it -- keeping this array's wire
+ * shape matching the spec's 5-field list exactly.
+ */
+export interface OfflineIou {
+  tx_uuid: Uint8Array; // 16 bytes
+  sender_device_id: Uint8Array; // 16 bytes
+  recipient_device_id: Uint8Array; // 16 bytes
+  amount: bigint;
+  currency: string;
+  seq: bigint; // matches devices.last_seq's BIGINT
+  ts: number; // unix ms, device clock at signing time
+}
+
+/**
+ * The payload CBOR-encoded inside a server-signed freshness token
+ * (GET /devices/:deviceId/freshness-token). Proves "this device successfully
+ * reached the server at issued_at" -- a server-attested fact a client can't
+ * forge or backdate, used to bound how stale an offline (Mode C) IOU is allowed
+ * to be (spec §5: "payer holds a freshness_token issued within 24h").
+ */
+export interface FreshnessToken {
+  device_id: Uint8Array; // 16 bytes
+  issued_at: number; // unix ms, SERVER clock
+}
+
+/**
+ * Purely informational -- NOT signed, NOT verifiable on its own. Shown by a
+ * Mode C payer (as a second QR, right after signing an OfflineIou) so the
+ * payee can locally track "I'm expecting this" without any cryptographic
+ * claim being made yet. The payee's only independently-verifiable proof of
+ * settlement is later checking GET /tx/:txUuid/receipt and verifying that
+ * server-signed receipt against the pinned server key -- exactly what a Mode
+ * B payee already does. This type exists so that check has a real, tested
+ * wire format instead of ad hoc JSON riding in a QR code.
+ */
+export interface IncomingIouInfo {
+  tx_uuid: Uint8Array; // 16 bytes
+  sender_device_id: Uint8Array; // 16 bytes
+  amount: bigint;
+  currency: string;
+}
+
+/** Terminal + in-flight states for a Mode C intent, mirrored on both the server's
+ * offline_intents table and the client's local SQLite queue. */
+export type OfflineSyncStatus =
+  | "PENDING"
+  | "SETTLED"
+  | "FAILED_INSUFFICIENT"
+  | "FAILED_EXPIRED"
+  | "FAILED_SEQUENCE_REGRESSION";
+
+/** Spec §5's mode-selection rule, verbatim: receiver-online wins first (Mode A,
+ * canonical/zero-risk), then sender-online (Mode B, bridge), else Mode C. */
+export function evaluateConnectivity(receiverOnline: boolean, senderOnline: boolean): ConnectivityMode {
+  if (receiverOnline) return ConnectivityMode.MODE_A;
+  if (senderOnline) return ConnectivityMode.MODE_B;
+  return ConnectivityMode.MODE_C;
+}
