@@ -195,8 +195,17 @@ below is the one deliberate exception, being built ahead of the rest of M3.
   `GET /devices/:deviceId/credential` (server) and `fetchPeerCredential`
   (mobile) provide the server-signed peer identity lookup this needs. `ADV-07`
   is AUTOMATED against this layer directly, no radio or GATT transport
-  required (`session.test.ts`). NOT yet wired into any UI or transport --
-  that's the GATT layer's job when M3 resumes.
+  required (`session.test.ts`). VALIDATED ON REAL HARDWARE: two identities
+  enrolled on one phone (`mobile/src/screens/SessionDemoScreen.tsx`, the
+  "ECDH (M3 preview)" tab), real biometric-gated signing, a real network
+  fetch+verify of each other's server-issued credential, real on-device
+  ECDH/HKDF, and a real AES-GCM seal→open round trip, both directions. This
+  is also what caught a real Hermes-specific bug vitest could never see:
+  `generateEphemeralKeyPair()`'s default RNG needs `crypto.getRandomValues`,
+  which Hermes doesn't provide -- fixed by making the entropy source
+  injectable (mobile passes `expo-crypto`'s `Crypto.getRandomBytes`). NOT yet
+  wired into a production transport -- that's the GATT layer's job when M3
+  resumes.
 - **Foreground-service type** for the connection-holding BLE service
   (Android 14/15). Not built; no foreground service exists yet.
 

@@ -189,6 +189,33 @@ describe("sealSessionMessage / openSessionMessage", () => {
   });
 });
 
+describe("generateEphemeralKeyPair", () => {
+  it("actually uses an injected randomBytes source, not just the default -- this is the exact contract a real on-device bug violated", () => {
+    // Found via on-device testing (not vitest, which runs under Node and
+    // never exercises this): @noble/hashes' default randomBytes() requires
+    // globalThis.crypto.getRandomValues, which Hermes/React Native does not
+    // provide unless polyfilled. generateEphemeralKeyPair MUST accept an
+    // injected source (mobile passes expo-crypto's Crypto.getRandomBytes) --
+    // this test proves the injection point is real, not decorative, by
+    // checking a fixed source produces a fully deterministic key pair.
+    const fixedSeed = new Uint8Array(48).fill(0x42);
+    const fixedSource = (length: number) => {
+      expect(length).toBe(48); // p256.lengths.seed
+      return fixedSeed;
+    };
+    const first = generateEphemeralKeyPair(fixedSource);
+    const second = generateEphemeralKeyPair(fixedSource);
+    expect(Buffer.from(first.secretKey).equals(Buffer.from(second.secretKey))).toBe(true);
+    expect(Buffer.from(first.publicKey).equals(Buffer.from(second.publicKey))).toBe(true);
+  });
+
+  it("the default (no argument) still produces a valid, usable key pair on Node", () => {
+    const kp = generateEphemeralKeyPair();
+    expect(kp.secretKey.length).toBe(32);
+    expect(kp.publicKey.length).toBe(33);
+  });
+});
+
 describe("deriveSessionKey: symmetry", () => {
   it("A and B derive the byte-identical key, regardless of who is 'first'", async () => {
     const txUuid = bytes16(1);
