@@ -1,18 +1,20 @@
 import { Encoder } from "cbor-x";
 import { describe, expect, it } from "vitest";
 import {
+  decodeDeviceCredential,
   decodeFreshnessToken,
   decodeIncomingIouInfo,
   decodeOfflineIou,
   decodeTxProposal,
   decodeTxReceipt,
+  encodeDeviceCredential,
   encodeFreshnessToken,
   encodeIncomingIouInfo,
   encodeOfflineIou,
   encodeTxProposal,
   encodeTxReceipt,
 } from "../cbor.js";
-import type { FreshnessToken, IncomingIouInfo, OfflineIou, TxProposal, TxReceipt } from "../../types.js";
+import type { DeviceCredential, FreshnessToken, IncomingIouInfo, OfflineIou, TxProposal, TxReceipt } from "../../types.js";
 
 function bytes16(fill: number): Uint8Array {
   return new Uint8Array(16).fill(fill);
@@ -180,5 +182,24 @@ describe("IncomingIouInfo CBOR round-trip", () => {
     const encoder = new Encoder({ useRecords: false });
     const malformed = encoder.encode([1, 2]);
     expect(() => decodeIncomingIouInfo(malformed)).toThrow();
+  });
+});
+
+describe("DeviceCredential CBOR round-trip", () => {
+  it("round-trips every field exactly, including a 33-byte compressed pubkey", () => {
+    const credential: DeviceCredential = {
+      device_id: bytes16(11),
+      identity_pubkey: new Uint8Array(33).fill(12),
+      issued_at: 1_784_764_600_000,
+    };
+
+    const decoded = decodeDeviceCredential(encodeDeviceCredential(credential));
+    expect(normalizeBytes(decoded)).toEqual(normalizeBytes(credential));
+  });
+
+  it("rejects a malformed (wrong-arity) CBOR array rather than returning partial garbage", () => {
+    const encoder = new Encoder({ useRecords: false });
+    const malformed = encoder.encode([1, 2, 3, 4]);
+    expect(() => decodeDeviceCredential(malformed)).toThrow();
   });
 });

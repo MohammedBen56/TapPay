@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createPrivateKey, createPublicKey, sign as nodeSign } from "node:crypto";
-import { encodeFreshnessToken, encodeTxReceipt, signCoseSign1, uuidToBytes, type Signer } from "@tappay/shared";
+import { encodeDeviceCredential, encodeFreshnessToken, encodeTxReceipt, signCoseSign1, uuidToBytes, type Signer } from "@tappay/shared";
 import { config } from "../config.js";
 import type { ReceiptSigner } from "../adapters/MockBankAdapter.js";
 import { compressedPublicKeyFromKeyObject } from "./ecPublicKey.js";
@@ -38,5 +38,16 @@ export const signServerReceipt: ReceiptSigner = async ({ txUuid, amount, currenc
  * server attests to a fact" COSE_Sign1 payloads. */
 export async function signFreshnessToken(deviceId: Uint8Array): Promise<Uint8Array> {
   const payload = encodeFreshnessToken({ device_id: deviceId, issued_at: Date.now() });
+  return signCoseSign1(payload, rawSign);
+}
+
+/** GET /devices/:deviceId/credential's signer -- same key/signer as receipts
+ * and freshness tokens, since all three are "the server attests to a fact".
+ * Lets a peer verify offline that `identityPubkey` really belongs to
+ * `deviceId`, the precondition authenticated session ECDH needs before
+ * deriving a shared secret (CLAUDE.md §5). Callers must only invoke this for
+ * an attestation_ok device -- see the route, which gates on it before calling. */
+export async function signDeviceCredential(deviceId: Uint8Array, identityPubkey: Uint8Array): Promise<Uint8Array> {
+  const payload = encodeDeviceCredential({ device_id: deviceId, identity_pubkey: identityPubkey, issued_at: Date.now() });
   return signCoseSign1(payload, rawSign);
 }

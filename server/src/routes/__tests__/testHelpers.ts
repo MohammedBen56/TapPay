@@ -15,7 +15,10 @@ export interface TestDevice {
  * these route tests are specifically about /tx/submit and /tx/sync's own
  * responsibilities, and no real Android attestation chain is available in this
  * environment to exercise the full enroll -> submit/sync pipeline end-to-end. */
-export async function createEnrolledDevice(startingBalance: bigint): Promise<TestDevice> {
+export async function createEnrolledDevice(
+  startingBalance: bigint,
+  options: { attestationOk?: boolean } = {},
+): Promise<TestDevice> {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const compressedPublicKey = compressedPublicKeyFromKeyObject(publicKey);
   const deviceId = randomUUID();
@@ -35,7 +38,7 @@ export async function createEnrolledDevice(startingBalance: bigint): Promise<Tes
         identity_pubkey: Buffer.from(compressedPublicKey),
         platform: "android",
         attestation_blob: JSON.stringify({ test: true }),
-        attestation_ok: true,
+        attestation_ok: options.attestationOk ?? true,
       })
       .execute();
     if (startingBalance > 0n) {

@@ -1,5 +1,13 @@
 import { Encoder } from "cbor-x";
-import type { FreshnessToken, IncomingIouInfo, OfflineIou, TxProposal, TxReceipt } from "../types.js";
+import type {
+  DeviceCredential,
+  FreshnessToken,
+  IncomingIouInfo,
+  OfflineIou,
+  SessionHello,
+  TxProposal,
+  TxReceipt,
+} from "../types.js";
 
 /**
  * A dedicated Encoder instance (not cbor-x's shared default) so unrelated global
@@ -138,4 +146,40 @@ export function decodeIncomingIouInfo(bytes: Uint8Array): IncomingIouInfo {
   }
   const [tx_uuid, sender_device_id, amount, currency] = decoded;
   return { tx_uuid, sender_device_id, amount: BigInt(amount), currency };
+}
+
+/** GET /devices/:deviceId/credential's signed payload -- see DeviceCredential's
+ * doc comment (types.ts) for why attestation_ok isn't a field here. Field order
+ * is the wire contract, same rule as every codec above. */
+const DEVICE_CREDENTIAL_FIELD_ORDER = ["device_id", "identity_pubkey", "issued_at"] as const;
+
+export function encodeDeviceCredential(credential: DeviceCredential): Uint8Array {
+  return cborCodec.encode(DEVICE_CREDENTIAL_FIELD_ORDER.map((key) => credential[key]));
+}
+
+export function decodeDeviceCredential(bytes: Uint8Array): DeviceCredential {
+  const decoded = cborCodec.decode(bytes);
+  if (!Array.isArray(decoded) || decoded.length !== DEVICE_CREDENTIAL_FIELD_ORDER.length) {
+    throw new Error("malformed DeviceCredential CBOR: expected a 3-element array");
+  }
+  const [device_id, identity_pubkey, issued_at] = decoded;
+  return { device_id, identity_pubkey, issued_at: Number(issued_at) };
+}
+
+/** Authenticated session ECDH's handshake payload -- see SessionHello's doc
+ * comment (types.ts). Field order is the wire contract, same rule as every
+ * codec above. */
+const SESSION_HELLO_FIELD_ORDER = ["tx_uuid", "device_id", "eph_pubkey", "ts"] as const;
+
+export function encodeSessionHello(hello: SessionHello): Uint8Array {
+  return cborCodec.encode(SESSION_HELLO_FIELD_ORDER.map((key) => hello[key]));
+}
+
+export function decodeSessionHello(bytes: Uint8Array): SessionHello {
+  const decoded = cborCodec.decode(bytes);
+  if (!Array.isArray(decoded) || decoded.length !== SESSION_HELLO_FIELD_ORDER.length) {
+    throw new Error("malformed SessionHello CBOR: expected a 4-element array");
+  }
+  const [tx_uuid, device_id, eph_pubkey, ts] = decoded;
+  return { tx_uuid, device_id, eph_pubkey, ts: Number(ts) };
 }

@@ -130,6 +130,40 @@ export interface IncomingIouInfo {
   currency: string;
 }
 
+/**
+ * The payload CBOR-encoded inside a server-signed device credential
+ * (GET /devices/:deviceId/credential). Lets a peer verify "this identity_pubkey
+ * really belongs to this enrolled device" offline, against the pinned server
+ * key -- the precondition authenticated session ECDH (CLAUDE.md §5's "code that
+ * does not exist yet" block) needs before deriving a shared secret. The server
+ * refuses to issue this at all unless attestation_ok, so `attestation_ok` is
+ * deliberately not a field here -- carrying it would let a client make its own
+ * trust decision instead of the credential's mere existence being the decision.
+ */
+export interface DeviceCredential {
+  device_id: Uint8Array; // 16 bytes
+  identity_pubkey: Uint8Array; // 33-byte SEC1-compressed P-256
+  issued_at: number; // unix ms, SERVER clock
+}
+
+/**
+ * Authenticated session ECDH's signed handshake message (CLAUDE.md §5's "code
+ * that does not exist yet" block -- being built ahead of the rest of M3 as a
+ * transport-agnostic layer). Each side generates an ephemeral P-256 key pair
+ * for one transaction and signs this WHOLE struct with its hardware identity
+ * key, not just the bare ephemeral pubkey: a signature over only the key could
+ * be lifted into a different transaction, so `tx_uuid` and `device_id` are
+ * bound inside the signed bytes, the same discipline the receiver nonce
+ * already gets inside TxProposal. See crypto/session.ts's deriveSessionKey for
+ * how a verified hello becomes a shared session key.
+ */
+export interface SessionHello {
+  tx_uuid: Uint8Array; // 16 bytes
+  device_id: Uint8Array; // 16 bytes -- the sender of THIS hello, not the peer
+  eph_pubkey: Uint8Array; // 33-byte SEC1-compressed P-256, this session only
+  ts: number; // unix ms, device clock at signing time
+}
+
 /** Terminal + in-flight states for a Mode C intent, mirrored on both the server's
  * offline_intents table and the client's local SQLite queue. */
 export type OfflineSyncStatus =

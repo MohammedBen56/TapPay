@@ -1,0 +1,257 @@
+import { gcm } from "@noble/ciphers/aes.js";
+import { p256 } from "@noble/curves/nist.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { decodeSessionHello, encodeSessionHello } from "./cbor.js";
+import { signCoseSign1, verifyCoseSign1, type Signer } from "./cose.js";
+import type { SessionHello } from "../types.js";
+
+/**
+ * Authenticated session ECDH (CLAUDE.md §5's "code that does not exist yet"
+ * block; spec §3.3). Transport-agnostic on purpose -- M3's BLE GATT layer will
+ * be this module's first caller, but nothing here assumes a radio, a specific
+ * message ordering beyond hello-then-derive, or even that both sides are on
+ * the same physical channel. `deriveSessionKey` NEVER falls back to an
+ * unauthenticated key on any failure; every rejection path returns `null`, and
+ * callers must treat `null` as "no session, do not proceed" -- fail closed,
+ * per spec §3.3's explicit instruction not to fall back to anonymous ECDH.
+ */
+
+/** How far a peer's SessionHello.ts may drift from our clock and still be
+ * accepted. A config-driven default, not a hardcoded constant callers can't
+ * override -- CLAUDE.md §5/§8's "config over constants" rule, mirrored here
+ * for shared code the way server/src/config.ts does it for the server. */
+export const DEFAULT_SESSION_HELLO_WINDOW_MS = 30_000;
+
+export interface EphemeralKeyPair {
+  secretKey: Uint8Array;
+  publicKey: Uint8Array; // 33-byte SEC1-compressed P-256
+}
+
+export function generateEphemeralKeyPair(): EphemeralKeyPair {
+  return p256.keygen();
+}
+
+export interface CreateSessionHelloParams {
+  txUuid: Uint8Array;
+  deviceId: Uint8Array;
+  ephPublicKey: Uint8Array;
+  sign: Signer;
+  now?: number;
+}
+
+/** Signs the WHOLE hello struct (see SessionHello's doc comment for why, not
+ * just the bare ephemeral key). `sign` is a plain `packages/shared` `Signer`,
+ * so `createIdentitySigner` (mobile's biometric-gated StrongBox signer) drops
+ * in with zero native changes. */
+export async function createSessionHello(params: CreateSessionHelloParams): Promise<Uint8Array> {
+  const hello: SessionHello = {
+    tx_uuid: params.txUuid,
+    device_id: params.deviceId,
+    eph_pubkey: params.ephPublicKey,
+    ts: params.now ?? Date.now(),
+  };
+  return signCoseSign1(encodeSessionHello(hello), params.sign);
+}
+
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  return compareBytes(a, b) === 0;
+}
+
+/**
+ * Canonical HKDF `info`: both (device_id, eph_pubkey) pairs, ordered by sorting
+ * on device_id lexicographically (byte-wise) -- NOT by who initiated. This is
+ * what lets A and B derive the identical key regardless of which side sent its
+ * hello first, the same ordering discipline server/src/db/locking.ts uses for
+ * row locks (sort first, then act, so both participants agree on order without
+ * needing to communicate about it).
+ */
+function buildTranscript(
+  a: { deviceId: Uint8Array; ephPubkey: Uint8Array },
+  b: { deviceId: Uint8Array; ephPubkey: Uint8Array },
+): Uint8Array {
+  const [first, second] = compareBytes(a.deviceId, b.deviceId) <= 0 ? [a, b] : [b, a];
+  const out = new Uint8Array(first.deviceId.length + first.ephPubkey.length + second.deviceId.length + second.ephPubkey.length);
+  let offset = 0;
+  for (const part of [first.deviceId, first.ephPubkey, second.deviceId, second.ephPubkey]) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+export interface DeriveSessionKeyParams {
+  txUuid: Uint8Array;
+  ourDeviceId: Uint8Array;
+  ourEphSecretKey: Uint8Array;
+  ourEphPublicKey: Uint8Array;
+  /** The peer's SessionHello, as a signed COSE_Sign1 -- verified against
+   * `peerIdentityPubkey` before anything inside it is trusted. */
+  peerHelloCose: Uint8Array;
+  /** The peer's ENROLLED identity_pubkey, learned only via a server-signed
+   * DeviceCredential (see mobile/src/crypto/identity.ts's fetchPeerCredential)
+   * -- never trust-on-first-use from the hello message itself, or this
+   * function would authenticate nothing. */
+  peerIdentityPubkey: Uint8Array;
+  now?: number;
+  helloWindowMs?: number;
+}
+
+/**
+ * Verifies the peer's hello, checks it's genuinely for this transaction and
+ * not a reflection of our own hello, derives the ECDH shared secret, and folds
+ * a transcript binding both device ids + ephemeral pubkeys + tx_uuid into an
+ * HKDF-SHA256-derived 32-byte session key. Returns `null` on ANY failure --
+ * see this module's top comment on why there is no fallback path.
+ */
+export function deriveSessionKey(params: DeriveSessionKeyParams): Uint8Array | null {
+  // verifyCoseSign1 itself never throws, but the malformed-CBOR decode inside
+  // it does (decodeCoseSign1Structure) -- wrapped so garbage peerHelloCose
+  // hits this function's own documented "null on ANY failure" contract
+  // instead of an uncaught exception a caller written to that contract
+  // wouldn't expect. Found via /security-review.
+  let verified: ReturnType<typeof verifyCoseSign1>;
+  try {
+    verified = verifyCoseSign1(params.peerHelloCose, params.peerIdentityPubkey);
+  } catch {
+    return null;
+  }
+  if (!verified) return null;
+
+  let peerHello: SessionHello;
+  try {
+    peerHello = decodeSessionHello(verified.payload);
+  } catch {
+    return null;
+  }
+
+  // decodeSessionHello only checks CBOR array arity, not field lengths -- a
+  // signer (even a legitimately enrolled one gone rogue) controls these bytes.
+  // Fixed lengths are enforced here rather than trusted implicitly: unequal
+  // device_id lengths between the two sides would make buildTranscript's
+  // concatenation ambiguous (no length-prefixing), and a wrong-length
+  // eph_pubkey would fail inside getSharedSecret anyway -- rejecting explicitly
+  // up front is clearer than relying on that incidental failure. Found via
+  // /security-review.
+  if (peerHello.device_id.length !== params.ourDeviceId.length || peerHello.eph_pubkey.length !== params.ourEphPublicKey.length) {
+    return null;
+  }
+
+  if (!bytesEqual(peerHello.tx_uuid, params.txUuid)) return null;
+  // Reflection defense: a hello claiming to be from our own device_id is
+  // either a bug or an attacker replaying our own message back at us.
+  if (bytesEqual(peerHello.device_id, params.ourDeviceId)) return null;
+
+  const now = params.now ?? Date.now();
+  const windowMs = params.helloWindowMs ?? DEFAULT_SESSION_HELLO_WINDOW_MS;
+  if (Math.abs(now - peerHello.ts) > windowMs) return null;
+
+  let sharedPoint: Uint8Array;
+  try {
+    sharedPoint = p256.getSharedSecret(params.ourEphSecretKey, peerHello.eph_pubkey, true);
+  } catch {
+    return null;
+  }
+  // Drop the 1-byte compressed-point sign prefix -- only the x-coordinate is
+  // used, the standard ECDH convention (the prefix encodes y's parity, which
+  // carries no additional entropy an attacker couldn't already derive).
+  const sharedX = sharedPoint.slice(1);
+
+  const transcript = buildTranscript(
+    { deviceId: params.ourDeviceId, ephPubkey: params.ourEphPublicKey },
+    { deviceId: peerHello.device_id, ephPubkey: peerHello.eph_pubkey },
+  );
+
+  return hkdf(sha256, sharedX, params.txUuid, transcript, 32);
+}
+
+/**
+ * A message's direction is derived from the SAME canonical device_id ordering
+ * `buildTranscript` already uses -- never a free "initiator"/"responder"
+ * string a caller assigns by hand. This closes a real footgun found via
+ * /security-review: this module's own domain is a SYMMETRIC bump between two
+ * peers with no inherent client/server roles, so nothing stops both sides of
+ * a genuine two-party session from each independently deciding "I'll call
+ * myself the initiator" -- which would make both sides seal under the same
+ * nonce space (byte[0]=0) with overlapping counters, breaking AES-GCM's
+ * confidentiality and authenticity outright on nonce reuse. Deriving the
+ * direction byte from `compareBytes(senderDeviceId, otherDeviceId)` instead
+ * makes the two sides' nonce spaces disjoint by construction, the same way
+ * `buildTranscript` already makes both sides agree on transcript order
+ * without needing to coordinate who goes first.
+ */
+function directionByte(senderDeviceId: Uint8Array, otherDeviceId: Uint8Array): number {
+  return compareBytes(senderDeviceId, otherDeviceId) <= 0 ? 0 : 1;
+}
+
+function buildNonce(direction: number, counter: bigint): Uint8Array {
+  if (counter < 0n || counter >= 2n ** 88n) {
+    throw new RangeError("session message counter out of range");
+  }
+  const nonce = new Uint8Array(12);
+  nonce[0] = direction;
+  let remaining = counter;
+  for (let i = 11; i >= 1; i--) {
+    nonce[i] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return nonce;
+}
+
+/**
+ * Seals `plaintext` with AES-256-GCM under a nonce built from the canonical
+ * direction (derived from `ourDeviceId` vs `peerDeviceId`, see directionByte)
+ * plus `counter`. `counter` is still the caller's responsibility: it must
+ * strictly increase per session and never be reused -- reusing a nonce breaks
+ * AES-GCM's guarantees outright. Full duplicate/out-of-order-delivery
+ * handling belongs to the transport layer (M3's GATT layer, when built), the
+ * same way TLS's record-layer sequence number alone doesn't solve transport
+ * reordering either -- this primitive's job is only "never reuse a nonce" and
+ * "reject anything not genuinely from the expected peer direction" (see
+ * openSessionMessage). The sealed output is `nonce || ciphertext+tag`.
+ */
+export function sealSessionMessage(
+  key: Uint8Array,
+  ourDeviceId: Uint8Array,
+  peerDeviceId: Uint8Array,
+  counter: bigint,
+  plaintext: Uint8Array,
+): Uint8Array {
+  const nonce = buildNonce(directionByte(ourDeviceId, peerDeviceId), counter);
+  const ciphertext = gcm(key, nonce).encrypt(plaintext);
+  const sealed = new Uint8Array(nonce.length + ciphertext.length);
+  sealed.set(nonce, 0);
+  sealed.set(ciphertext, nonce.length);
+  return sealed;
+}
+
+/**
+ * Opens a buffer produced by `sealSessionMessage`. Returns `null` on ANY
+ * failure -- truncated input, wrong direction, wrong key, or a failed GCM tag
+ * check -- never throws, so callers can treat every failure identically:
+ * discard the message, do not proceed. Checking the nonce's direction byte
+ * against the PEER's canonical role (before ever attempting to decrypt)
+ * rejects a message reflected back at its own sender or otherwise tagged with
+ * the wrong direction, even though both sides hold the identical symmetric
+ * key -- found via /security-review as a gap the original design left
+ * entirely to the caller with no structural enforcement.
+ */
+export function openSessionMessage(key: Uint8Array, ourDeviceId: Uint8Array, peerDeviceId: Uint8Array, sealed: Uint8Array): Uint8Array | null {
+  if (sealed.length < 12) return null;
+  const nonce = sealed.slice(0, 12);
+  if (nonce[0] !== directionByte(peerDeviceId, ourDeviceId)) return null;
+  const ciphertext = sealed.slice(12);
+  try {
+    return gcm(key, nonce).decrypt(ciphertext);
+  } catch {
+    return null;
+  }
+}
