@@ -1,6 +1,7 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { p256 } from "@noble/curves/nist.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
+import { randomBytes as nobleRandomBytes } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeSessionHello, encodeSessionHello } from "./cbor.js";
 import { signCoseSign1, verifyCoseSign1, type Signer } from "./cose.js";
@@ -28,8 +29,36 @@ export interface EphemeralKeyPair {
   publicKey: Uint8Array; // 33-byte SEC1-compressed P-256
 }
 
-export function generateEphemeralKeyPair(): EphemeralKeyPair {
-  return p256.keygen();
+/**
+ * `randomBytes` defaults to @noble/hashes's own CSPRNG, which delegates to
+ * `globalThis.crypto.getRandomValues` -- present on Node (this default is
+ * exactly what server-side and vitest callers get, unchanged) but NOT
+ * present on Hermes/React Native without an explicit polyfill. Found via
+ * on-device testing: this function threw "crypto.getRandomValues must be
+ * defined" the first time it actually ran on a phone, since nothing in this
+ * package had ever needed CSPRNG randomness before (verification-only code
+ * doesn't generate keys). Mobile callers MUST pass their own source --
+ * `expo-crypto`'s `Crypto.getRandomBytes`, the same primitive
+ * TapScreen.tsx already uses for its receiver nonce -- rather than this
+ * package silently depending on a global that isn't there. `p256.keygen`'s
+ * `seed` parameter (48 bytes for P-256, `p256.lengths.seed`) is the
+ * injection point: when provided, it skips @noble/curves' own internal
+ * randomBytes() call entirely.
+ */
+// p256.lengths.seed is typed as `number | undefined` (the lengths shape is
+// shared across curves that don't all define a seed length), but P-256's ECDH
+// interface always provides one -- asserted once here rather than on every
+// generateEphemeralKeyPair call. `as number` (not just a narrowed flow check)
+// is required so the fixed type, not just a flow fact, is visible from inside
+// generateEphemeralKeyPair's closure below -- TS narrowing on a module-scope
+// binding doesn't propagate into a separately-declared function body.
+if (p256.lengths.seed === undefined) {
+  throw new Error("@noble/curves p256 unexpectedly has no seed length");
+}
+const P256_SEED_LENGTH = p256.lengths.seed as number;
+
+export function generateEphemeralKeyPair(randomBytes: (length: number) => Uint8Array = nobleRandomBytes): EphemeralKeyPair {
+  return p256.keygen(randomBytes(P256_SEED_LENGTH));
 }
 
 export interface CreateSessionHelloParams {

@@ -3,14 +3,17 @@ import { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import OfflineScreen from './src/screens/OfflineScreen';
+import SessionDemoScreen from './src/screens/SessionDemoScreen';
 import TapScreen from './src/screens/TapScreen';
 import TelemetryScreen from './src/screens/TelemetryScreen';
 
 // Dev-tool UI only, switching between M0 (sensor/bump telemetry, still open --
 // no validated bump detection yet), M1 (QR transport crypto/ledger flow, Mode
-// A only), and M2 (Mode B bridge + Mode C offline IOU). None of these is the
-// real polished TapScreen of later milestones.
-type Screen = 'telemetry' | 'tap' | 'offline';
+// A only), M2 (Mode B bridge + Mode C offline IOU), and an M3 preview (the
+// authenticated ECDH session layer, proven on real hardware but not yet wired
+// into any transport -- no GATT layer exists yet). None of these is the real
+// polished TapScreen of later milestones.
+type Screen = 'telemetry' | 'tap' | 'offline' | 'session';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('tap');
@@ -30,10 +33,14 @@ export default function App() {
         >
           <Text style={[styles.tabText, screen === 'telemetry' && styles.tabTextActive]}>Telemetry (M0)</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, screen === 'session' && styles.tabActive]} onPress={() => setScreen('session')}>
+          <Text style={[styles.tabText, screen === 'session' && styles.tabTextActive]}>ECDH (M3 preview)</Text>
+        </TouchableOpacity>
       </View>
       {screen === 'tap' && <TapScreen />}
       {screen === 'offline' && <OfflineScreen />}
       {screen === 'telemetry' && <TelemetryScreen />}
+      {screen === 'session' && <SessionDemoScreen />}
       <StatusBar style="light" />
     </>
   );
