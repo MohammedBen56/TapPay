@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { consumeNonce, issueNonce } from "../attestation/nonceStore.js";
 import { extractAttestationChallenge, verifyAttestationChain } from "../attestation/verify.js";
-import { signFreshnessToken } from "../crypto/serverSigner.js";
+import { signDeviceCredential, signFreshnessToken } from "../crypto/serverSigner.js";
 import { db } from "../db/kysely.js";
 
 const enrollBodySchema = z.object({
@@ -126,5 +126,40 @@ export function registerDeviceRoutes(app: FastifyInstance): void {
 
     const token = await signFreshnessToken(deviceIdBytes);
     return reply.send({ token: Buffer.from(token).toString("base64") });
+  });
+
+  // Authenticated session ECDH (CLAUDE.md §5) needs each side to verify the
+  // peer's ephemeral key against the peer's ENROLLED identity_pubkey --
+  // trust-on-first-use would reopen the exact MITM hole authentication closes.
+  // findDeviceAccount only reads identity_pubkey server-side; this is the one
+  // endpoint that exposes it, and only as a server-signed credential a peer
+  // can verify offline against the pinned server key -- never the raw row.
+  app.get("/devices/:deviceId/credential", async (request, reply) => {
+    const { deviceId } = request.params as { deviceId: string };
+    const deviceIdParsed = z.string().uuid().safeParse(deviceId);
+    if (!deviceIdParsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: "deviceId must be a UUID" });
+    }
+
+    const deviceIdBytes = Buffer.from(uuidToBytes(deviceId));
+    const device = await db
+      .selectFrom("devices")
+      .select(["identity_pubkey", "attestation_ok"])
+      .where("device_id", "=", deviceIdBytes)
+      .executeTakeFirst();
+    if (!device) {
+      return reply.status(404).send({ error: "UnknownDevice", message: "device is not enrolled" });
+    }
+    if (!device.attestation_ok) {
+      // Fail closed, same gate freshness-token and /tx/submit use: an
+      // unverified device's key is never vouched for, so no credential is
+      // issued at all -- attestation_ok is deliberately not a field on the
+      // credential itself (see DeviceCredential's doc comment), the server
+      // simply refuses to sign one.
+      return reply.status(403).send({ error: "UnverifiedDevice", message: "device attestation was not verified" });
+    }
+
+    const credential = await signDeviceCredential(deviceIdBytes, new Uint8Array(device.identity_pubkey));
+    return reply.send({ credential: Buffer.from(credential).toString("base64") });
   });
 }

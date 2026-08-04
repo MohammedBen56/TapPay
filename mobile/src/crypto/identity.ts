@@ -1,4 +1,5 @@
-import { derToRaw, type Signer } from '@tappay/shared';
+import { bytesToUuid, decodeDeviceCredential, derToRaw, verifyCoseSign1, type DeviceCredential, type Signer } from '@tappay/shared';
+import { getServerPublicKeyBytes } from '../config/serverPublicKey';
 import { SERVER_BASE_URL } from '../config/serverUrl';
 import {
   generateIdentityKey as nativeGenerateIdentityKey,
@@ -70,6 +71,42 @@ export async function fetchFreshnessToken(deviceId: string): Promise<string> {
   }
   const { token } = (await res.json()) as { token: string };
   return token;
+}
+
+/**
+ * Fetches a peer's server-signed device credential (GET /devices/:id/credential)
+ * and verifies it against the pinned server key, the exact analogue of
+ * fetchFreshnessToken above. This is the ONLY trustworthy way to learn a peer's
+ * identity_pubkey for authenticated session ECDH -- trust-on-first-use (just
+ * believing whatever pubkey the peer's ephemeral-key message claims) would
+ * reopen the MITM hole authentication exists to close. Returns null rather than
+ * throwing on any verification failure or non-200 response, since the caller's
+ * job either way is "fail closed, no shared secret" -- see
+ * packages/shared/src/crypto/session.ts's deriveSessionKey.
+ *
+ * The signature alone is NOT enough: it only proves the server vouches for
+ * *some* device's pubkey, not that it's the one asked about here -- fetch()
+ * is an untrusted channel (plain http://, same posture as fetchFreshnessToken
+ * above), so a substituted response body carrying a different, still
+ * genuinely server-signed credential (e.g. an attacker's own, obtained by
+ * enrolling their own device) would pass signature verification and silently
+ * authenticate a session with the wrong identity. Found via /security-review
+ * -- the device_id inside the signed payload MUST be checked against what was
+ * actually requested.
+ */
+export async function fetchPeerCredential(deviceId: string): Promise<DeviceCredential | null> {
+  const res = await fetch(`${SERVER_BASE_URL}/devices/${deviceId}/credential`);
+  if (!res.ok) return null;
+  const { credential } = (await res.json()) as { credential: string };
+  const verified = verifyCoseSign1(base64ToBytes(credential), getServerPublicKeyBytes());
+  if (!verified) return null;
+  try {
+    const decoded = decodeDeviceCredential(verified.payload);
+    if (bytesToUuid(decoded.device_id) !== deviceId) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
 }
 
 /**

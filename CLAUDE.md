@@ -106,8 +106,9 @@ result. Update the status lines below in the same change.
 
 - **M3 — Motion engine + BLE GATT transport.**
   STATUS: NOT STARTED, except the authenticated ECDH session layer (§5), which
-  is being built ahead of the rest of M3 by owner decision — it needs neither
-  bump data nor BLE hardware, unlike everything else below.
+  was built ahead of the rest of M3 by owner decision — it needed neither bump
+  data nor BLE hardware, unlike everything else below. `ADV-07` is automated
+  against it already (see §10); it is not yet wired into any transport.
   Kotlin `MotionEngine` (100Hz ring buffer, spike detect, 2-channel cross-corr),
   `MagEngine`, low-latency GATT server/scanner, RSSI convergence filter, GATT
   clock sync.
@@ -188,9 +189,14 @@ below is the one deliberate exception, being built ahead of the rest of M3.
   derived. The transcript (both ephemeral pubkeys + both device ids + `tx_uuid`)
   MUST be bound into the HKDF `info`. Anonymous ECDH is forbidden, including as
   an error fallback — fail closed. Spec §3.3; `ADV-07` is the test.
-  STATUS: the session layer itself (`packages/shared/src/crypto/session.ts`) is
-  being built now, transport-agnostic, ahead of the GATT transport it will
-  eventually run over.
+  STATUS: the session layer itself (`packages/shared/src/crypto/session.ts` --
+  `deriveSessionKey`, `sealSessionMessage`/`openSessionMessage`) is BUILT,
+  transport-agnostic, ahead of the GATT transport it will eventually run over.
+  `GET /devices/:deviceId/credential` (server) and `fetchPeerCredential`
+  (mobile) provide the server-signed peer identity lookup this needs. `ADV-07`
+  is AUTOMATED against this layer directly, no radio or GATT transport
+  required (`session.test.ts`). NOT yet wired into any UI or transport --
+  that's the GATT layer's job when M3 resumes.
 - **Foreground-service type** for the connection-holding BLE service
   (Android 14/15). Not built; no foreground service exists yet.
 
@@ -358,9 +364,9 @@ docker compose exec telemetry python -m analysis.bump_model data/1.jsonl data/2.
     AUTOMATED (`server/src/adapters/__tests__/MockBankAdapter.test.ts`).
   - ADV-04 table-drop rejection — BLOCKED on M3's motion engine + a physical device.
   - ADV-05 ambiguous bump — BLOCKED on M3 + a second physical phone.
-  - ADV-07 MITM relay — a protocol-level test of the authenticated ECDH
-    session layer (§5); needs no radio and no second phone. Not yet automated
-    as of the last update to this file; do not mark the suite complete without it.
+  - ADV-07 MITM relay — AUTOMATED (`packages/shared/src/crypto/__tests__/session.test.ts`)
+    against the authenticated ECDH session layer (§5) directly; needed no radio
+    and no second phone, contrary to this file's own earlier assumption.
 - Crypto paths are tested against published third-party vectors (COSE-WG +
   Wycheproof — see §5's crypto invariants) before integration.
 - Run `/security-review` on any change touching signing, ECDH, the SQL locking
