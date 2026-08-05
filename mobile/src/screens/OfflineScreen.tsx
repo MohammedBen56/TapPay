@@ -29,6 +29,7 @@ import {
   insertPendingIntent,
   listIncomingIntents,
   listPendingIntents,
+  listRecentIntents,
   markIncomingSettled,
   markSyncResult,
   type IncomingIntent,
@@ -320,7 +321,7 @@ function ModeCPayer({ identity }: { identity: EnrolledIdentity }) {
   const [infoQrFor, setInfoQrFor] = useState<string | null>(null);
 
   const refreshPending = useCallback(async () => {
-    setPending(await listPendingIntents(identity.deviceId));
+    setPending(await listRecentIntents(identity.deviceId));
   }, [identity.deviceId]);
 
   useEffect(() => {

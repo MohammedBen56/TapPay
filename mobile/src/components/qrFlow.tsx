@@ -1,7 +1,12 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+
+/** How long the camera ignores new scans after one fires, so a misaimed scan
+ * (wrong QR, decode error) doesn't permanently kill the camera for callers
+ * that handle the error by staying on the same step -- see ScanStep below. */
+const SCAN_DEBOUNCE_MS = 1500;
 
 /**
  * Extracted from TapScreen.tsx (M1) so OfflineScreen.tsx (M2, Mode B/C) doesn't
@@ -43,11 +48,19 @@ export function ScanStep({ label, onManualSubmit }: { label: string; onManualSub
   const [permission, requestPermission] = useCameraPermissions();
   const [manualInput, setManualInput] = useState('');
   const [locked, setLocked] = useState(false);
+  const unlockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (unlockTimer.current) clearTimeout(unlockTimer.current);
+    };
+  }, []);
 
   const handleScanned = useCallback(
     ({ data }: { data: string }) => {
       if (locked) return;
       setLocked(true);
+      unlockTimer.current = setTimeout(() => setLocked(false), SCAN_DEBOUNCE_MS);
       onManualSubmit(data);
     },
     [locked, onManualSubmit],

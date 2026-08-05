@@ -1,5 +1,8 @@
 import {
+  bytesToUuid,
   createSessionHello,
+  decodeCoseSign1Unverified,
+  decodeSessionHello,
   deriveSessionKey,
   generateEphemeralKeyPair,
   openSessionMessage,
@@ -25,15 +28,27 @@ import { uuidv4 } from '../util/uuid';
  * verification, and deriveSessionKey's ECDH/HKDF/AES-GCM math actually
  * running on Hermes rather than Node under vitest.
  *
- * Same one-phone constraint as M1's TapScreen and M2's OfflineScreen: with
- * only one physical device available, both sides of this two-party exchange
- * are enrolled in the same app session and relayed via the existing QR/paste
- * transport (bytesToQrString/qrStringToBytes) -- proving the wire encoding
- * too, not just calling the functions in-process. Unlike TapScreen's
- * role-toggle (which resets state on switch), BOTH sides are rendered here
- * simultaneously and permanently: an ECDH exchange needs each side's
- * ephemeral secret key to survive for the whole flow, which a
- * mount/unmount-on-toggle pattern would destroy.
+ * Originally built under the one-phone constraint shared with M1's TapScreen
+ * and M2's OfflineScreen: both identities enrolled in the same app session,
+ * relayed via the existing QR/paste transport (bytesToQrString/
+ * qrStringToBytes) -- proving the wire encoding too, not just calling the
+ * functions in-process. Both sides are still rendered simultaneously and
+ * permanently (unlike TapScreen's role-toggle, which resets state on
+ * switch) so each side's ephemeral secret key survives the whole flow.
+ *
+ * Now also runs across two genuinely separate phones: each side's peer info
+ * (device_id, session tx_uuid) is only ever read from LOCAL state
+ * (peer.identity / sessionTxUuid) when the other identity really is enrolled
+ * in this same process. Otherwise -- the two-phone case, where only one
+ * side's identity is ever enrolled per phone -- both are instead learned
+ * from the peer's own scanned Hello (decodeCoseSign1Unverified +
+ * decodeSessionHello read the untrusted routing fields, same "read kid, then
+ * verify" pattern used elsewhere in this codebase). This does not weaken
+ * authentication: fetchPeerCredential still re-verifies that learned
+ * device_id against the server-signed credential before any shared secret is
+ * derived, exactly as it already did for the locally-known case -- this only
+ * removes the requirement that both identities live in one process, the same
+ * thing BLE discovery would tell a real device before a handshake starts.
  */
 
 type Side = 'alice' | 'bob';
@@ -48,6 +63,11 @@ interface SideState {
   enrolling: boolean;
   eph: EphemeralKeyPair | null;
   helloQr: string | null;
+  /** The peer's device_id, learned from their scanned Hello when the peer
+   * isn't enrolled in THIS process (the real two-phone case) -- see
+   * effectivePeerDeviceId below. Unused, and unnecessary, when peer.identity
+   * is locally known (one-phone testing). */
+  remotePeerDeviceId: string | null;
   sessionKey: Uint8Array | null;
   messageInput: string;
   sealedQr: string | null;
@@ -62,12 +82,21 @@ function initialSideState(email: string): SideState {
     enrolling: false,
     eph: null,
     helloQr: null,
+    remotePeerDeviceId: null,
     sessionKey: null,
     messageInput: 'hello from the other side',
     sealedQr: null,
     openedMessage: null,
     error: null,
   };
+}
+
+/** The peer's device_id for seal/open direction and credential lookup:
+ * prefer the peer's real local identity when it's enrolled in this same
+ * process (one-phone testing), else fall back to what was learned from their
+ * scanned Hello (two-phone case). */
+function effectivePeerDeviceId(own: SideState, peer: SideState): string | null {
+  return peer.identity?.deviceId ?? own.remotePeerDeviceId;
 }
 
 // A human copy-pasting a QR string between two panels on one phone routinely
@@ -122,14 +151,32 @@ export default function SessionDemoScreen() {
     [patchSide, sides],
   );
 
-  const bothEnrolled = sides.alice.identity !== null && sides.bob.identity !== null;
+  const anyEnrolled = sides.alice.identity !== null || sides.bob.identity !== null;
 
   const handleNewSession = useCallback(() => {
     setSessionTxUuid(uuidv4());
     // A new session invalidates any prior key material, but not enrollment.
     setSides((prev) => ({
-      alice: { ...prev.alice, eph: null, helloQr: null, sessionKey: null, sealedQr: null, openedMessage: null, error: null },
-      bob: { ...prev.bob, eph: null, helloQr: null, sessionKey: null, sealedQr: null, openedMessage: null, error: null },
+      alice: {
+        ...prev.alice,
+        eph: null,
+        helloQr: null,
+        remotePeerDeviceId: null,
+        sessionKey: null,
+        sealedQr: null,
+        openedMessage: null,
+        error: null,
+      },
+      bob: {
+        ...prev.bob,
+        eph: null,
+        helloQr: null,
+        remotePeerDeviceId: null,
+        sessionKey: null,
+        sealedQr: null,
+        openedMessage: null,
+        error: null,
+      },
     }));
   }, []);
 
@@ -139,12 +186,19 @@ export default function SessionDemoScreen() {
       if (!own.identity || !sessionTxUuid) return;
       patchSide(side, { error: null });
       try {
+        // Reuse an already-generated ephemeral key if one exists (the
+        // two-phone responder path generates it while deriving the session
+        // key from the peer's Hello, BEFORE ever calling this function --
+        // signing a hello with a different eph key than the one used for
+        // ECDH would silently desync the two sides). Only mint a fresh one
+        // for the normal initiator path, where this is the first action.
+        //
         // @noble/curves' default RNG needs globalThis.crypto.getRandomValues,
         // which Hermes doesn't provide -- pass expo-crypto's real native RNG
         // explicitly, the same primitive TapScreen.tsx already uses for its
         // receiver nonce. Found the hard way: this screen's whole purpose is
         // catching exactly this kind of on-device-only gap.
-        const eph = generateEphemeralKeyPair(Crypto.getRandomBytes);
+        const eph = own.eph ?? generateEphemeralKeyPair(Crypto.getRandomBytes);
         // Shows the system biometric prompt (KeyStoreManager.sign), same
         // signer every other signing path in this app uses.
         const helloCose = await createSessionHello({
@@ -165,24 +219,56 @@ export default function SessionDemoScreen() {
     async (side: Side, data: string) => {
       const own = sides[side];
       const peer = sides[otherSide(side)];
-      if (!own.identity || !own.eph || !peer.identity || !sessionTxUuid) return;
+      if (!own.identity) return;
       patchSide(side, { error: null });
       try {
         const peerHelloCose = qrStringToBytes(data);
+        // Read routing metadata WITHOUT trusting it yet -- same "read kid,
+        // then verify" pattern as TxProposal's sender_device_id elsewhere in
+        // this codebase. Nothing from this unverified decode is used to
+        // derive the session key below; it only tells us which tx_uuid to
+        // adopt (if we don't have one yet -- the two-phone responder case)
+        // and which device to ask the SERVER about.
+        const unverifiedHello = decodeSessionHello(decodeCoseSign1Unverified(peerHelloCose).payload);
+        const helloTxUuid = bytesToUuid(unverifiedHello.tx_uuid);
+
+        let txUuid = sessionTxUuid;
+        if (!txUuid) {
+          // No local session yet -- this side is responding to a peer we
+          // haven't enrolled locally (two real phones), so adopt the tx_uuid
+          // the initiator's Hello actually carries rather than minting our
+          // own mismatched one.
+          txUuid = helloTxUuid;
+          setSessionTxUuid(txUuid);
+        } else if (txUuid !== helloTxUuid) {
+          throw new Error("this Hello is for a different session (tx_uuid mismatch) -- start a new session on both sides");
+        }
+
+        // Own ephemeral key: reuse it if we already signed our own Hello
+        // first (one-phone testing order), else generate it now -- the
+        // two-phone responder scans before signing, since it has no tx_uuid
+        // to sign a Hello with until this point. See handleSignHello's
+        // matching reuse-if-present logic; both must agree on the same key.
+        const eph = own.eph ?? generateEphemeralKeyPair(Crypto.getRandomBytes);
+
         // The peer's REAL enrolled identity_pubkey, verified server-side --
-        // never trust-on-first-use from the pasted hello itself. The parent
-        // already knows peer.identity.deviceId (both identities live in this
-        // one screen), mirroring how a real BLE flow already knows which
-        // device it's talking to from discovery, before the ECDH handshake.
-        const credential = await fetchPeerCredential(peer.identity.deviceId);
+        // never trust-on-first-use from the pasted hello itself. Prefer the
+        // peer's real local identity when it's enrolled in this same process
+        // (one-phone testing); otherwise ask about the device_id the peer's
+        // own Hello claims to be from -- fetchPeerCredential re-verifies
+        // that claim against the server-signed credential before trusting
+        // it, so this doesn't weaken authentication, it only removes the
+        // requirement that both identities live in one process.
+        const peerDeviceId = peer.identity?.deviceId ?? bytesToUuid(unverifiedHello.device_id);
+        const credential = await fetchPeerCredential(peerDeviceId);
         if (!credential) {
           throw new Error('could not fetch/verify the peer device credential -- is the server reachable, and is the peer really enrolled?');
         }
         const key = deriveSessionKey({
-          txUuid: uuidToBytes(sessionTxUuid),
+          txUuid: uuidToBytes(txUuid),
           ourDeviceId: uuidToBytes(own.identity.deviceId),
-          ourEphSecretKey: own.eph.secretKey,
-          ourEphPublicKey: own.eph.publicKey,
+          ourEphSecretKey: eph.secretKey,
+          ourEphPublicKey: eph.publicKey,
           peerHelloCose,
           peerIdentityPubkey: credential.identity_pubkey,
           helloWindowMs: DEMO_HELLO_WINDOW_MS,
@@ -194,7 +280,7 @@ export default function SessionDemoScreen() {
             'session derivation failed -- check the pasted Hello is for this session and really from the other side (not pasted back at itself)',
           );
         }
-        patchSide(side, { sessionKey: key });
+        patchSide(side, { eph, remotePeerDeviceId: peerDeviceId, sessionKey: key });
       } catch (err) {
         patchSide(side, { error: String(err) });
       }
@@ -206,13 +292,14 @@ export default function SessionDemoScreen() {
     (side: Side) => {
       const own = sides[side];
       const peer = sides[otherSide(side)];
-      if (!own.identity || !own.sessionKey || !peer.identity) return;
+      const peerDeviceId = effectivePeerDeviceId(own, peer);
+      if (!own.identity || !own.sessionKey || !peerDeviceId) return;
       patchSide(side, { error: null });
       try {
         const sealed = sealSessionMessage(
           own.sessionKey,
           uuidToBytes(own.identity.deviceId),
-          uuidToBytes(peer.identity.deviceId),
+          uuidToBytes(peerDeviceId),
           0n,
           asciiToBytes(own.messageInput),
         );
@@ -228,11 +315,12 @@ export default function SessionDemoScreen() {
     (side: Side, data: string) => {
       const own = sides[side];
       const peer = sides[otherSide(side)];
-      if (!own.identity || !own.sessionKey || !peer.identity) return;
+      const peerDeviceId = effectivePeerDeviceId(own, peer);
+      if (!own.identity || !own.sessionKey || !peerDeviceId) return;
       patchSide(side, { error: null });
       try {
         const sealedBytes = qrStringToBytes(data);
-        const opened = openSessionMessage(own.sessionKey, uuidToBytes(own.identity.deviceId), uuidToBytes(peer.identity.deviceId), sealedBytes);
+        const opened = openSessionMessage(own.sessionKey, uuidToBytes(own.identity.deviceId), uuidToBytes(peerDeviceId), sealedBytes);
         if (!opened) {
           throw new Error('failed to open -- wrong key, tampered message, or wrong direction (pasted your own sealed message back at yourself?)');
         }
@@ -280,16 +368,22 @@ export default function SessionDemoScreen() {
 
         {own.error && <Text style={styles.error}>{own.error}</Text>}
 
-        {own.identity && sessionTxUuid && (
+        {own.identity && (
           <>
-            {!own.helloQr && (
+            {sessionTxUuid && !own.helloQr && (
               <TouchableOpacity style={styles.button} onPress={() => void handleSignHello(side)}>
                 <Text style={styles.buttonText}>Sign & show Hello (biometric prompt)</Text>
               </TouchableOpacity>
             )}
             {own.helloQr && <QrWithCopyableText value={own.helloQr} />}
 
-            {own.helloQr && !own.sessionKey && (
+            {/* Available even before a local session/Hello exists: the
+                two-phone responder scans the initiator's Hello first, and
+                adopts its tx_uuid + peer device_id from it (see
+                handlePeerHelloScanned). One-phone testing still works in the
+                original order (sign, then scan) since it only reads this
+                once own.helloQr is already set below anyway. */}
+            {!own.sessionKey && (
               <ScanStep label={`Paste ${peerLabel} Hello`} onManualSubmit={(data) => void handlePeerHelloScanned(side, data)} />
             )}
 
@@ -299,7 +393,7 @@ export default function SessionDemoScreen() {
               </View>
             )}
 
-            {own.sessionKey && peer.identity && (
+            {own.sessionKey && effectivePeerDeviceId(own, peer) && (
               <View style={styles.section}>
                 <View style={styles.row}>
                   <Text style={styles.rowLabel}>Message</Text>
@@ -327,11 +421,13 @@ export default function SessionDemoScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Authenticated Session ECDH (M3 preview)</Text>
       <Text style={styles.subtitle}>
-        Two identities enrolled on this one phone, exchanging real signed Hellos and deriving a real session key -- proving
-        packages/shared/src/crypto/session.ts on real hardware. Not wired into any transport yet; that's M3's GATT layer.
+        Exchanges real signed Hellos and derives a real session key over the real network -- proving
+        packages/shared/src/crypto/session.ts on real hardware. Works with both identities enrolled on this one phone,
+        or with only one enrolled here and the other on a second physical phone (scan its Hello below to join its
+        session instead of pressing "Start session"). Not wired into any transport yet; that's M3's GATT layer.
       </Text>
 
-      {bothEnrolled && (
+      {anyEnrolled && (
         <TouchableOpacity style={styles.button} onPress={handleNewSession}>
           <Text style={styles.buttonText}>{sessionTxUuid ? 'New session' : 'Start session'}</Text>
         </TouchableOpacity>
