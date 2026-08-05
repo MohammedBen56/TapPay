@@ -164,7 +164,20 @@ export default function TapScreen() {
       setSettledAmount({ amount: receipt.amount, currency: receipt.currency });
       setPayerStep('settled');
     } catch (err) {
-      setError(String(err));
+      // Not a receipt -- check whether it's actually the payee's Request QR
+      // (an unsigned, differently-shaped payload). handleProposalReceived
+      // reverts the payee to showing exactly that on any /tx/submit failure
+      // (insufficient funds, expired proposal, etc.), which the payer has no
+      // way to know about since they already moved past the proposal step.
+      // Give the real reason instead of a confusing crypto-shaped error.
+      try {
+        decodeTxRequest(qrStringToBytes(qrData));
+        setError(
+          "the payee couldn't complete the payment (their screen is now showing a new payment request instead of a receipt) -- start over and try a different amount",
+        );
+      } catch {
+        setError(String(err));
+      }
       setPayerStep('scan-receipt');
     }
   }, []);
@@ -198,7 +211,20 @@ export default function TapScreen() {
         </View>
       )}
 
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && (
+        <View style={styles.section}>
+          <Text style={styles.error}>{error}</Text>
+          {/* Every OTHER recovery path in this screen requires both sides to
+              already be looking at the right QR -- but a failure on one side
+              (e.g. the payee's /tx/submit rejected for insufficient funds)
+              strands the other side waiting for something that's never
+              coming, with no way back except force-quitting the app. This is
+              the one unconditional way out, from any step. */}
+          <TouchableOpacity style={styles.button} onPress={resetFlow}>
+            <Text style={styles.buttonText}>Start over</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {identity && (
         <>

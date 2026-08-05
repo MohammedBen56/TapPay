@@ -91,6 +91,12 @@ function openDb(): Promise<SQLite.SQLiteDatabase> {
           status TEXT NOT NULL,
           receipt TEXT
         );
+        CREATE TABLE IF NOT EXISTS identity (
+          email TEXT PRIMARY KEY NOT NULL,
+          device_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          strongbox INTEGER NOT NULL
+        );
       `);
       return db;
     });
@@ -166,6 +172,44 @@ export async function listPendingIntents(deviceId: string): Promise<PendingInten
     synced_at: number | null;
     receipt: string | null;
   }>('SELECT * FROM offline_intents WHERE device_id = ? AND sync_status = ? ORDER BY seq ASC', deviceId, 'PENDING');
+
+  return rows.map((row) => ({
+    txUuid: row.tx_uuid,
+    deviceId: row.device_id,
+    coseIou: row.cose_iou,
+    freshnessToken: row.freshness_token,
+    recipientDeviceId: row.recipient_device_id,
+    amount: row.amount,
+    currency: row.currency,
+    seq: row.seq,
+    createdAt: row.created_at,
+    syncStatus: row.sync_status,
+    syncedAt: row.synced_at,
+    receipt: row.receipt,
+  }));
+}
+
+/** Same shape as listPendingIntents but for on-screen display: no sync_status
+ * filter, so SETTLED/FAILED_* rows stay visible instead of silently
+ * disappearing the moment they leave PENDING. listPendingIntents stays
+ * PENDING-only because it's also used to pick the /tx/sync batch -- keep the
+ * two call sites separate rather than filtering client-side. */
+export async function listRecentIntents(deviceId: string): Promise<PendingIntent[]> {
+  const db = await openDb();
+  const rows = await db.getAllAsync<{
+    tx_uuid: string;
+    device_id: string;
+    cose_iou: string;
+    freshness_token: string;
+    recipient_device_id: string;
+    amount: string;
+    currency: string;
+    seq: string;
+    created_at: number;
+    sync_status: LocalSyncStatus;
+    synced_at: number | null;
+    receipt: string | null;
+  }>('SELECT * FROM offline_intents WHERE device_id = ? ORDER BY created_at DESC LIMIT 20', deviceId);
 
   return rows.map((row) => ({
     txUuid: row.tx_uuid,
@@ -274,5 +318,40 @@ export async function markIncomingSettled(txUuid: string, receipt: string): Prom
     "UPDATE incoming_intents SET status = 'SETTLED', receipt = ? WHERE tx_uuid = ?",
     receipt,
     txUuid,
+  );
+}
+
+/** Enrolled-identity cache, keyed by email (the same key /devices/enroll
+ * itself uses to find-or-create an account). Without this, enrollDevice()
+ * mints a fresh device_id on every call -- surviving only in React state --
+ * and any app restart or screen switch orphans both offline_intents and
+ * incoming_intents, since those are keyed by device_id. See identity.ts's
+ * enrollDevice for the read-then-fall-back-to-real-enroll flow this backs. */
+export async function getEnrolledIdentity(
+  email: string,
+): Promise<{ deviceId: string; accountId: string; strongBoxBacked: boolean } | null> {
+  const db = await openDb();
+  const row = await db.getFirstAsync<{ device_id: string; account_id: string; strongbox: number }>(
+    'SELECT device_id, account_id, strongbox FROM identity WHERE email = ?',
+    email,
+  );
+  return row ? { deviceId: row.device_id, accountId: row.account_id, strongBoxBacked: row.strongbox === 1 } : null;
+}
+
+export async function saveEnrolledIdentity(
+  email: string,
+  identity: { deviceId: string; accountId: string; strongBoxBacked: boolean },
+): Promise<void> {
+  const db = await openDb();
+  await db.runAsync(
+    `INSERT INTO identity (email, device_id, account_id, strongbox) VALUES (?, ?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET device_id = ?, account_id = ?, strongbox = ?`,
+    email,
+    identity.deviceId,
+    identity.accountId,
+    identity.strongBoxBacked ? 1 : 0,
+    identity.deviceId,
+    identity.accountId,
+    identity.strongBoxBacked ? 1 : 0,
   );
 }

@@ -1,6 +1,7 @@
 import { bytesToUuid, decodeDeviceCredential, derToRaw, verifyCoseSign1, type DeviceCredential, type Signer } from '@tappay/shared';
 import { getServerPublicKeyBytes } from '../config/serverPublicKey';
 import { SERVER_BASE_URL } from '../config/serverUrl';
+import { getEnrolledIdentity, saveEnrolledIdentity } from '../db/offlineIntents';
 import {
   generateIdentityKey as nativeGenerateIdentityKey,
   getIdentityPublicKey as nativeGetIdentityPublicKey,
@@ -23,8 +24,28 @@ export interface EnrolledIdentity {
  * identity key against it, then register the resulting public key +
  * attestation chain with the server -- verified there against Google roots,
  * never trusted locally (spec §2.5).
+ *
+ * Idempotent per email: the previous enrolled identity is cached locally
+ * (`db/offlineIntents.ts`'s `identity` table) and reused as long as its
+ * hardware key still exists in the KeyStore, so a screen switch or app
+ * restart doesn't mint a fresh device_id and orphan the Mode C SQLite
+ * queues, which are keyed by device_id. `nativeGetIdentityPublicKey` throws
+ * `IdentityKeyNotFoundException` (surfaced as a rejected promise) when the
+ * KeyStore alias is gone -- e.g. app data was cleared without clearing the
+ * KeyStore, or vice versa -- which is exactly the "stale cache, do a real
+ * enroll" signal this falls through on.
  */
 export async function enrollDevice(email: string): Promise<EnrolledIdentity> {
+  const cached = await getEnrolledIdentity(email);
+  if (cached) {
+    try {
+      await nativeGetIdentityPublicKey(cached.deviceId);
+      return cached;
+    } catch {
+      // Cached row's hardware key is gone -- fall through to a real enroll below.
+    }
+  }
+
   const deviceId = uuidv4();
 
   const nonceRes = await fetch(`${SERVER_BASE_URL}/devices/enroll/nonce`);
@@ -52,7 +73,9 @@ export async function enrollDevice(email: string): Promise<EnrolledIdentity> {
   }
   const { account_id: accountId } = (await enrollRes.json()) as { account_id: string };
 
-  return { deviceId, accountId, strongBoxBacked };
+  const identity = { deviceId, accountId, strongBoxBacked };
+  await saveEnrolledIdentity(email, identity);
+  return identity;
 }
 
 /**
