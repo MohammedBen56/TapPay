@@ -4,7 +4,7 @@ import sensible from "@fastify/sensible";
 import { sql } from "kysely";
 import { registerAuthPlugin } from "./auth/plugin.js";
 import { config } from "./config.js";
-import { db } from "./db/kysely.js";
+import { db, setDbLogger } from "./db/kysely.js";
 import { appliedMigrationIsCurrent, withTimeout } from "./health.js";
 import { loggerOptions } from "./logging.js";
 import { register } from "./metrics.js";
@@ -56,6 +56,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(sensible);
   registerAuthPlugin(app);
   setRedisLogger(app.log);
+  setDbLogger(app.log);
 
   if (options.rateLimit !== false) {
     // Registered before the routes below, on the same (non-encapsulated) app

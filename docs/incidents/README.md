@@ -16,6 +16,7 @@ regression test is a finding that could recur.
 | [0002](0002-bearer-shaped-receipt.md) | Bearer-token-shaped `TxReceipt` |
 | [0003](0003-unverified-email-enrollment.md) | Unverified email→device binding at enrollment |
 | [0004](0004-nativewind-tailwind-v4-crash.md) | NativeWind/Tailwind v4 startup crash |
+| [0005](0005-pg-pool-unhandled-error-crash.md) | Unhandled `pg.Pool` error crashed the server on a database restart |
 
 ## The pattern across 0001–0003
 

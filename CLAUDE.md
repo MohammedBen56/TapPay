@@ -744,6 +744,14 @@ pnpm --filter server restore-drill     # Ship List Phase 3: dumps the real dev d
                                   # throwaway container, runs checkLedgerInvariants() against it,
                                   # logs a dated row to ops/RESTORE_DRILL.md. Cleans up after itself
                                   # even on failure.
+docker compose --profile chaos up -d toxiproxy  # required before chaos-experiment (below) --
+                                  # not started by a plain `docker compose up`
+pnpm --filter server chaos-experiment  # Ship List Phase 3: injects latency + connection-reset
+                                  # (via toxiproxy) and a real `docker compose kill -s SIGKILL db`
+                                  # during bursts of real transfers, checks invariants after each,
+                                  # logs to ops/CHAOS_LOG.md. This is what found incident 0005
+                                  # (docs/incidents/) -- an unhandled pg.Pool error crashing the
+                                  # whole server on a database restart, since fixed.
 
 # Demo login (after `pnpm --filter server seed`):
 #   customer_id: 10000001 .. 10000005   password: Demo#2026 (same for all)
