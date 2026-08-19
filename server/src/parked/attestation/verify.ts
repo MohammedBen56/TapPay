@@ -2,8 +2,8 @@ import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { OctetString, fromBER } from "asn1js";
 import { Certificate } from "pkijs";
-import { config } from "../config.js";
-import { compressedPublicKeyFromKeyObject } from "../crypto/ecPublicKey.js";
+import { config } from "../../config.js";
+import { compressedPublicKeyFromKeyObject } from "../../crypto/ecPublicKey.js";
 
 /** OID for the Android Key Attestation extension (KeyDescription), present on
  * the leaf certificate of a hardware attestation chain. */

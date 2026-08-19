@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import type { CommitResult, IBankAdapter, ReservationResult } from "@tappay/shared";
+import type { CommitResult, IBankAdapter, ReservationResult, TransferContext } from "@tappay/shared";
 import type { Database } from "../db/kysely.js";
 import { availableBalanceLocked, lockAccount, lockAccountsInOrder } from "../db/locking.js";
 import { config } from "../config.js";
@@ -11,15 +11,33 @@ export class MockBankFault extends Error {
   }
 }
 
+/** 16 zero bytes -- the receipt's recipient binding when no TransferContext is
+ * available (commit()'s bare-reservation path, which has no route today) or
+ * for Mode C, which has no nonce concept in OfflineIou. Not the same as "no
+ * binding at all": the caller-side check still requires the receiver_nonce
+ * field to equal what the payee itself generated, and Mode C payees always
+ * expect all-zero, so a receipt from a context-less path can never satisfy a
+ * Mode A/B payee's non-zero-nonce check. */
+// Deliberately NOT typed `: TransferContext` -- both fields are optional on
+// that interface (v2 added a third, `reference`), but every field here is
+// always concretely defined, and signReceipt (below) needs that narrower,
+// non-optional type at its two call sites.
+export const ZERO_RECEIPT_CONTEXT = { recipientDeviceId: new Uint8Array(16), receiverNonce: new Uint8Array(16) };
+
 /** Produces the server's COSE_Sign1 receipt bytes over a settled transaction.
  * Injected rather than hardcoded to a specific crypto library, so MockBankAdapter's
  * ledger-correctness tests (Step 3) don't need the real COSE signer (Step 5) to
- * exist -- Step 8 wires in the real one. */
+ * exist -- Step 8 wires in the real one.
+ *
+ * recipientDeviceId/receiverNonce bind the receipt to its intended payee --
+ * see TxReceipt's doc comment (packages/shared/src/types.ts) for why. */
 export type ReceiptSigner = (params: {
   txUuid: string;
   amount: bigint;
   currency: string;
   settledAt: Date;
+  recipientDeviceId: Uint8Array;
+  receiverNonce: Uint8Array;
 }) => Promise<Uint8Array>;
 
 export interface MockBankAdapterOptions {
@@ -186,11 +204,15 @@ export class MockBankAdapter implements IBankAdapter {
         ])
         .execute();
 
+      // commit() has no route in production (see the interface's own doc
+      // comment) and no device-level context available -- always zero-bound.
       const receiptSignature = await this.signReceipt({
         txUuid,
         amount: locked.amount,
         currency: locked.currency,
         settledAt,
+        recipientDeviceId: ZERO_RECEIPT_CONTEXT.recipientDeviceId,
+        receiverNonce: ZERO_RECEIPT_CONTEXT.receiverNonce,
       });
       await trx
         .updateTable("reservations")
@@ -218,6 +240,7 @@ export class MockBankAdapter implements IBankAdapter {
     toAccountId: string,
     amount: bigint,
     currency: string,
+    context: TransferContext = ZERO_RECEIPT_CONTEXT,
   ): Promise<CommitResult> {
     await this.simulateNetwork();
 
@@ -229,6 +252,27 @@ export class MockBankAdapter implements IBankAdapter {
         .selectAll()
         .where("tx_uuid", "=", txUuid)
         .executeTakeFirst();
+
+      // tx_uuid is chosen by whoever signs, so it is NOT scoped to a device or
+      // a pair of accounts -- a different signer reusing an in-flight or
+      // settled tx_uuid must be rejected outright, never silently resumed.
+      // Checked BEFORE the state branches below so this also closes the HELD
+      // case: without it, a pre-existing HELD row for this tx_uuid (from an
+      // unrelated reserve()/transfer() call) would skip the balance check
+      // entirely (see the `if (!existing)` guard further down) and get
+      // committed using THIS call's accounts/amount instead of its own. Same
+      // bug family as the tx_uuid settlement-slot hijack already fixed once
+      // in routes/sync.ts (see CLAUDE.md §5) -- this is the transfer()-level
+      // instance of it, which that fix does not reach.
+      if (
+        existing &&
+        (existing.account_id !== fromAccountId ||
+          existing.counterparty_account_id !== toAccountId ||
+          existing.amount !== amount ||
+          existing.currency !== currency)
+      ) {
+        return { success: false, settledAt: new Date(0), receiptSignature: EMPTY_RECEIPT, failureReason: "tx_uuid_conflict" };
+      }
 
       if (existing?.state === "COMMITTED") {
         // Idempotent resubmission: same receipt, no new journal write. See
@@ -282,12 +326,45 @@ export class MockBankAdapter implements IBankAdapter {
         ])
         .execute();
 
-      const receiptSignature = await this.signReceipt({ txUuid, amount, currency, settledAt });
+      const receiptSignature = await this.signReceipt({
+        txUuid,
+        amount,
+        currency,
+        settledAt,
+        recipientDeviceId: context.recipientDeviceId ?? ZERO_RECEIPT_CONTEXT.recipientDeviceId,
+        receiverNonce: context.receiverNonce ?? ZERO_RECEIPT_CONTEXT.receiverNonce,
+      });
       await trx
         .updateTable("reservations")
         .set({ receipt_signature: Buffer.from(receiptSignature) })
         .where("tx_uuid", "=", txUuid)
         .execute();
+
+      // v2 (docs/TapPay_v2_Technical_Design.md §4): the human-readable
+      // reference lives on its own table, keyed by tx_uuid, inserted in this
+      // same transaction so a settled transfer can never exist without it.
+      // onConflict...doNothing rather than erroring: this branch is also
+      // reached by a fresh (non-idempotent-replay) commit of a HELD
+      // reservation that was reserve()'d earlier without a reference and is
+      // only now being told one via transfer()'s context -- a second call
+      // for the same tx_uuid must not fail the whole settlement over a
+      // cosmetic row that's already there. The COMMITTED-idempotent-replay
+      // branch above returns before reaching here, so a resubmission never
+      // touches this table at all -- reference is fixed at first settlement.
+      if (context.reference !== undefined) {
+        await trx
+          .insertInto("transfers")
+          .values({
+            tx_uuid: txUuid,
+            from_account_id: fromAccountId,
+            to_account_id: toAccountId,
+            amount,
+            currency,
+            reference: context.reference,
+          })
+          .onConflict((oc) => oc.column("tx_uuid").doNothing())
+          .execute();
+      }
 
       return { success: true, settledAt, receiptSignature };
     });

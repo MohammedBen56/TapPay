@@ -2,7 +2,7 @@ import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { compressedPublicKeyFromKeyObject } from "../../crypto/ecPublicKey.js";
+import { compressedPublicKeyFromKeyObject } from "../../../crypto/ecPublicKey.js";
 import { verifyAttestationChain } from "../verify.js";
 
 const FIXTURES_DIR = fileURLToPath(new URL("./fixtures/", import.meta.url));

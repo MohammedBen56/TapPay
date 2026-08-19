@@ -23,12 +23,14 @@ const rawSign: Signer = async (bytesToSign) =>
  * TxReceipt CBOR payload and wraps it in a full COSE_Sign1 structure, matching
  * CommitResult.receiptSignature's documented meaning ("COSE_Sign1 from server
  * identity key"), not just a bare ECDSA signature. */
-export const signServerReceipt: ReceiptSigner = async ({ txUuid, amount, currency, settledAt }) => {
+export const signServerReceipt: ReceiptSigner = async ({ txUuid, amount, currency, settledAt, recipientDeviceId, receiverNonce }) => {
   const payload = encodeTxReceipt({
     tx_uuid: uuidToBytes(txUuid),
     settled_at: settledAt.getTime(),
     amount,
     currency,
+    recipient_device_id: recipientDeviceId,
+    receiver_nonce: receiverNonce,
   });
   return signCoseSign1(payload, rawSign);
 };

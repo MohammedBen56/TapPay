@@ -1,4 +1,5 @@
 import type { Transaction } from "kysely";
+import { accountLockWaitSeconds } from "../metrics.js";
 import type { Database } from "./kysely.js";
 
 export class UnknownAccountError extends Error {
@@ -19,12 +20,14 @@ export class UnknownAccountError extends Error {
  * actual serialization point.
  */
 export async function lockAccount(trx: Transaction<Database>, accountId: string): Promise<void> {
+  const stopTimer = accountLockWaitSeconds.startTimer();
   const row = await trx
     .selectFrom("accounts")
     .select("account_id")
     .where("account_id", "=", accountId)
     .forUpdate()
     .executeTakeFirst();
+  stopTimer();
   if (!row) throw new UnknownAccountError(accountId);
 }
 
