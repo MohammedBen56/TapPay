@@ -74,6 +74,26 @@ services:
       - "grafanadata:/var/lib/grafana"
     depends_on: [prometheus]
 
+  # TLS termination in front of the host-run server -- see Caddyfile's own
+  # header comment for the full rationale (closes D1, CLAUDE.md §11) and the
+  # real bug it works around (Caddy erroring on the TLS handshake itself for
+  # any client, mobile included, that sends no SNI for an IP-literal host --
+  # found by direct reproduction, not assumed). Requires a locally-issued
+  # mkcert certificate at caddy/certs/ (gitignored, generated per-machine --
+  # see the Caddyfile comment for the exact command) before this will start
+  # cleanly; it fails fast and loudly if that's missing, which is correct.
+  caddy:
+    image: caddy:2.11.4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "443:443"
+      - "443:443/udp" # HTTP/3 -- harmless to publish even if no client uses it
+    volumes:
+      - "./Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./caddy/certs:/certs:ro"
+      - "caddydata:/data"
+
 # The server always runs on the host (pnpm --filter server dev), not in Docker
 # -- there is no server/Dockerfile. A `server` service under an `integration`
 # profile previously referenced `build: ./server`, which cannot build; removed
@@ -83,3 +103,4 @@ volumes:
   pgdata:
   promdata:
   grafanadata:
+  caddydata:

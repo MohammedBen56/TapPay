@@ -1,0 +1,63 @@
+# Local-dev/demo TLS termination in front of the host-run Fastify server
+# (CLAUDE.md §9 -- the server always runs on the host, `pnpm --filter server
+# dev`, never in Docker). Closes D1 (CLAUDE.md §11): every request including
+# POST /auth/login's password field was plaintext http:// before this.
+#
+# Certificate: locally-issued by mkcert (https://github.com/FiloSottile/mkcert),
+# not Let's Encrypt -- there's no public domain for a LAN-only dev server to
+# prove control of. Generate/regenerate with:
+#   mkcert -cert-file caddy/certs/server.pem -key-file caddy/certs/server-key.pem \
+#     <your-LAN-IP> localhost 127.0.0.1 host.docker.internal
+# caddy/certs/ is gitignored -- everyone who runs this stack generates their
+# own local CA; a shared committed root key would defeat the point of it
+# being local-only trust. mobile/src/config/serverUrl.ts's own comment
+# documents the LAN-IP-changes-per-network tradeoff this inherits.
+{
+	auto_https off
+	admin off
+}
+
+# A single bare `:443` address (any host, that port) rather than one
+# matcher per hostname/IP -- found by direct reproduction that mobile HTTP
+# clients (confirmed here with curl, and OpenSSL's `-noservername`) commonly
+# send NO SNI at all for an IP-literal host (RFC 6066 says SNI shouldn't
+# carry IP literals), and Caddy has no site to fall back to for a
+# no-SNI/non-matching-SNI connection when multiple named site blocks share
+# the listener -- it sends a raw TLS "internal error" alert instead of ever
+# reaching the HTTP layer. Since this proxy only ever serves the one
+# backend, there is no ambiguity to resolve via SNI in the first place: one
+# address, one cert, applied to every connection on the port regardless of
+# what hostname (if any) the client asked for. `mobile/src/config/
+# serverUrl.ts` connects by IP literal, exactly the case this fixes.
+:443 {
+	tls /certs/server.pem /certs/server-key.pem {
+		# Mozilla "Intermediate" compatibility profile, guidelines v6.0
+		# (https://ssl-config.mozilla.org/guidelines/6.0.json), the same
+		# profile CLAUDE.md's plan cites -- re-verify against a newer
+		# guidelines version at each major cert/infra change, not just once.
+		protocols tls1.2 tls1.3
+		ciphers TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+		curves x25519 secp256r1 secp384r1
+		# TLS 1.3 ciphersuites are not independently configurable here --
+		# Go's crypto/tls (what Caddy is built on) fixes them to exactly
+		# Mozilla's intermediate TLS 1.3 set (TLS_AES_128_GCM_SHA256,
+		# TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256) already, so
+		# there's nothing to pin more tightly than the platform default.
+	}
+
+	# OCSP stapling: deliberately not configured. Caddy only staples a
+	# certificate that carries an OCSP responder URL, and a locally-issued
+	# mkcert leaf never does -- there is no OCSP infrastructure for a private
+	# CA to staple against. Separately, Let's Encrypt itself ended OCSP
+	# support in August 2025, so even a future real cert from LE would have
+	# nothing to staple either; re-evaluate this line only if/when a non-LE
+	# public CA with live OCSP is actually in use.
+	header Strict-Transport-Security "max-age=63072000"
+	# HSTS is near-irrelevant for an API host with no browser clients -- the
+	# real downgrade defense for this app is the mobile client hardcoding
+	# https:// in serverUrl.ts, not a header a native HTTP client doesn't
+	# enforce. Set anyway: harmless, standard, and correct for the day a
+	# browser-based admin console or web client talks to this same host.
+
+	reverse_proxy host.docker.internal:3000
+}

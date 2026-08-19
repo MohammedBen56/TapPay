@@ -14,6 +14,10 @@ android/.gradle/
 *.keystore
 server/keys/
 
+# mkcert-issued local TLS cert/key for Caddy -- regenerated per-machine
+# (Caddyfile's own comment has the exact command), never shared/committed
+caddy/certs/
+
 # Python
 __pycache__/
 *.pyc
