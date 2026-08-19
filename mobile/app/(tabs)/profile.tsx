@@ -136,7 +136,7 @@ export default function ProfileScreen(): React.JSX.Element {
               </View>
               <Text style={styles.promptTitle}>Hold phones together</Text>
               <Text style={styles.promptBody}>
-                Bring the back of this phone close to the other person's phone to share your account info.
+                Bring the back of this phone close to the other person&apos;s phone to share your account info.
               </Text>
               <GlassButton
                 label="Done"

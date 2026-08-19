@@ -50,7 +50,7 @@ function RootNavigator(): React.JSX.Element | null {
           }}
         />
       </Stack.Protected>
-      <Stack.Protected guard={status === "signedOut" || status === "awaitingBiometricPrompt"}>
+      <Stack.Protected guard={status === "signedOut" || status === "awaitingBiometricPrompt" || status === "locked"}>
         <Stack.Screen name="sign-in" />
       </Stack.Protected>
     </Stack>

@@ -52,7 +52,7 @@ function SegmentedRow<T extends string>({
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.segmentGroup}>
         {options.map((option) => (
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button"
             key={option}
             style={[styles.segment, option === value && styles.segmentActive]}
             onPress={() => onChange(option)}
@@ -96,7 +96,9 @@ export default function TelemetryScreen() {
   const clientRef = useRef<TelemetryClient | null>(null);
   const tag = useMemo<BumpTag>(() => ({ grip, orientation, contactPoint }), [grip, orientation, contactPoint]);
   const tagRef = useRef(tag);
-  tagRef.current = tag;
+  useEffect(() => {
+    tagRef.current = tag;
+  }, [tag]);
 
   // Live bump-detector filter state, carried across sensor batches (see
   // highpassStep) -- reset each time capture is (re-)armed, in the effect below.
@@ -132,6 +134,9 @@ export default function TelemetryScreen() {
     // assumes starting from rest at the beginning of a capture.
     prevRawAccelRef.current = null;
     prevFilteredAccelRef.current = [0, 0, 0];
+    // Reset-on-(re)arm, not derivable during render -- `armed` flipping true
+    // is the trigger.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBumpDetected(false);
     setDetectedBumpCount(0);
 
@@ -177,7 +182,7 @@ export default function TelemetryScreen() {
         bumpCooldownRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [armed, harnessHost, sessionId, deviceRole, deviceId, processSampleForBumpDetection]);
 
   const handleArmToggle = useCallback(async (next: boolean) => {
@@ -211,7 +216,7 @@ export default function TelemetryScreen() {
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Harness host</Text>
-        <TextInput
+        <TextInput accessibilityLabel="Text input field"
           style={styles.input}
           value={harnessHost}
           onChangeText={setHarnessHost}
@@ -225,12 +230,12 @@ export default function TelemetryScreen() {
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Device id</Text>
-        <TextInput style={styles.input} value={deviceId} onChangeText={setDeviceId} editable={!armed} autoCapitalize="none" />
+        <TextInput accessibilityLabel="Text input field" style={styles.input} value={deviceId} onChangeText={setDeviceId} editable={!armed} autoCapitalize="none" />
       </View>
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Session</Text>
-        <TextInput
+        <TextInput accessibilityLabel="Text input field"
           style={[styles.input, styles.sessionText]}
           value={sessionId}
           onChangeText={setSessionId}
@@ -238,7 +243,7 @@ export default function TelemetryScreen() {
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <TouchableOpacity style={styles.smallButton} onPress={handleNewSession} disabled={armed}>
+        <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={handleNewSession} disabled={armed}>
           <Text style={styles.smallButtonText}>New</Text>
         </TouchableOpacity>
       </View>
@@ -286,7 +291,7 @@ export default function TelemetryScreen() {
         </Text>
       </View>
 
-      <TouchableOpacity style={[styles.markButton, !armed && styles.markButtonDisabled]} onPress={handleMarkBump} disabled={!armed}>
+      <TouchableOpacity accessibilityRole="button" style={[styles.markButton, !armed && styles.markButtonDisabled]} onPress={handleMarkBump} disabled={!armed}>
         <Text style={styles.markButtonText}>Mark Bump</Text>
       </TouchableOpacity>
     </ScrollView>

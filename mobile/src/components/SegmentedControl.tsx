@@ -13,7 +13,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange }:
       {options.map((opt) => {
         const active = opt.value === value;
         return (
-          <Pressable key={opt.value} onPress={() => onChange(opt.value)} style={[styles.segment, active && styles.segmentActive]}>
+          <Pressable accessibilityRole="button" key={opt.value} onPress={() => onChange(opt.value)} style={[styles.segment, active && styles.segmentActive]}>
             <Text style={[styles.label, active && styles.labelActive]}>{opt.label}</Text>
           </Pressable>
         );

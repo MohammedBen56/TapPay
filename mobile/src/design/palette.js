@@ -32,8 +32,14 @@ const colors = {
   bone: "#EEF1F4",
   textPrimary: "rgba(238,241,244,0.92)",
   textSecondary: "rgba(238,241,244,0.62)",
-  textTertiary: "rgba(238,241,244,0.45)",
-  textQuiet: "rgba(238,241,244,0.36)", // section labels, meta, inactive tabs
+  // textTertiary/textQuiet alphas were raised from their original 0.45/0.36
+  // (WCAG audit -- mobile/scripts/check-contrast.js -- found both below
+  // 4.5:1 against `ground`, since every real call site uses them on
+  // caption-sized/12-13px text that never qualifies for the 3:1 "large
+  // text" exception) to the lowest values that clear 4.5:1 with a small
+  // margin, keeping their relative ordering intact.
+  textTertiary: "rgba(238,241,244,0.55)",
+  textQuiet: "rgba(238,241,244,0.50)", // section labels, meta, inactive tabs
 
   // Platinum -- the only accent. A neutral metal, not a hue. Reserved for
   // GlassButton's variant="primary" fill -- at most one per screen.

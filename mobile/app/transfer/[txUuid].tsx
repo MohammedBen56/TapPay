@@ -4,7 +4,7 @@ import * as Print from "expo-print";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
 import { api } from "../../src/api/endpoints";

@@ -351,7 +351,7 @@ export default function SessionDemoScreen() {
 
         <View style={styles.row}>
           <Text style={styles.rowLabel}>Email</Text>
-          <TextInput
+          <TextInput accessibilityLabel="Text input field"
             style={styles.input}
             value={own.email}
             onChangeText={(text) => patchSide(side, { email: text })}
@@ -360,7 +360,7 @@ export default function SessionDemoScreen() {
             autoCorrect={false}
           />
           {!own.identity && (
-            <TouchableOpacity style={styles.smallButton} onPress={() => void handleEnroll(side)} disabled={own.enrolling}>
+            <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={() => void handleEnroll(side)} disabled={own.enrolling}>
               <Text style={styles.smallButtonText}>{own.enrolling ? 'Enrolling…' : 'Enroll'}</Text>
             </TouchableOpacity>
           )}
@@ -378,7 +378,7 @@ export default function SessionDemoScreen() {
         {own.identity && (
           <>
             {sessionTxUuid && !own.helloQr && (
-              <TouchableOpacity style={styles.button} onPress={() => void handleSignHello(side)}>
+              <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => void handleSignHello(side)}>
                 <Text style={styles.buttonText}>Sign & show Hello (biometric prompt)</Text>
               </TouchableOpacity>
             )}
@@ -404,18 +404,18 @@ export default function SessionDemoScreen() {
               <View style={styles.section}>
                 <View style={styles.row}>
                   <Text style={styles.rowLabel}>Message</Text>
-                  <TextInput
+                  <TextInput accessibilityLabel="Text input field"
                     style={styles.input}
                     value={own.messageInput}
                     onChangeText={(text) => patchSide(side, { messageInput: text })}
                   />
-                  <TouchableOpacity style={styles.smallButton} onPress={() => handleSealMessage(side)}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={() => handleSealMessage(side)}>
                     <Text style={styles.smallButtonText}>Seal & show</Text>
                   </TouchableOpacity>
                 </View>
                 {own.sealedQr && <QrWithCopyableText value={own.sealedQr} />}
                 <ScanStep label={`Paste ${peerLabel} sealed message`} onManualSubmit={(data) => handleOpenMessage(side, data)} />
-                {own.openedMessage !== null && <Text style={styles.settledText}>opened: "{own.openedMessage}"</Text>}
+                {own.openedMessage !== null && <Text style={styles.settledText}>opened: &quot;{own.openedMessage}&quot;</Text>}
               </View>
             )}
           </>
@@ -431,11 +431,11 @@ export default function SessionDemoScreen() {
         Exchanges real signed Hellos and derives a real session key over the real network -- proving
         packages/shared/src/crypto/session.ts on real hardware. Works with both identities enrolled on this one phone,
         or with only one enrolled here and the other on a second physical phone (scan its Hello below to join its
-        session instead of pressing "Start session"). Not wired into any transport yet; that's M3's GATT layer.
+        session instead of pressing &quot;Start session&quot;). Not wired into any transport yet; that&apos;s M3&apos;s GATT layer.
       </Text>
 
       {anyEnrolled && (
-        <TouchableOpacity style={styles.button} onPress={handleNewSession}>
+        <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={handleNewSession}>
           <Text style={styles.buttonText}>{sessionTxUuid ? 'New session' : 'Start session'}</Text>
         </TouchableOpacity>
       )}

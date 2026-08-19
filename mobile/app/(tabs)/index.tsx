@@ -55,7 +55,13 @@ export default function HomeScreen(): React.JSX.Element {
           <Card style={styles.balanceCard}>
             <View style={styles.balanceRow}>
               <Text style={styles.balanceLabel}>Available balance</Text>
-              <Pressable onPress={toggleVisible} hitSlop={12} accessibilityRole="button" accessibilityLabel="Toggle balance visibility">
+              <Pressable
+                onPress={toggleVisible}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel={visible ? "Hide balance" : "Show balance"}
+                accessibilityHint={visible ? "Replaces the amount with dots" : "Reveals your available balance"}
+              >
                 <Ionicons name={visible ? "eye-outline" : "eye-off-outline"} size={20} color={colors.textSecondary} />
               </Pressable>
             </View>

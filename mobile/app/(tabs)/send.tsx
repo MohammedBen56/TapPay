@@ -90,8 +90,15 @@ export default function SendScreen(): React.JSX.Element {
     });
   }, []);
 
+  // "Latest ref" pattern: hardwareBackPress's handler below is only
+  // re-subscribed when `goBack`'s identity changes, not on every step
+  // change, but needs the CURRENT step when it fires -- synced via effect
+  // rather than a direct-render write, same pattern as AuthContext.tsx's
+  // statusRef.
   const stepRef = useRef(step);
-  stepRef.current = step;
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   // Android hardware back / gesture nav: while mid-flow, step back through
   // the wizard instead of leaving the tab (the bottom-tabs navigator's
@@ -428,7 +435,7 @@ function ContactsList({ onChoose }: { onChoose: (r: Recipient) => void }): React
   return (
     <View style={styles.gap16}>
       {beneficiaries.map((b) => (
-        <Pressable
+        <Pressable accessibilityRole="button"
           key={b.id}
           onPress={() => onChoose({ rib: b.rib, displayName: b.display_name, beneficiaryId: b.id })}
           style={({ pressed }) => [styles.contactRow, pressed && styles.pressed]}
@@ -501,6 +508,10 @@ function NfcRecipient({ onChoose }: { onChoose: (r: Recipient) => void }): React
 
   useEffect(() => {
     let cancelled = false;
+    // Standard reset-then-fetch pattern: `attempt` changing (the retry
+    // button) is what should re-arm "waiting", there's no way to derive
+    // that during render instead.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus("waiting");
     setError(null);
 

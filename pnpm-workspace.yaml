@@ -5,6 +5,7 @@ packages:
 allowBuilds:
   cbor-extract: true
   esbuild: true
+  unrs-resolver: true
 
 # Every entry here is a denial-of-service-class finding (unbounded loop /
 # OOM / CPU exhaustion -- no injection or auth-bypass potential) buried

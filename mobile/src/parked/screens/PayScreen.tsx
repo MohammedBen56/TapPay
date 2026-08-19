@@ -78,12 +78,14 @@ async function submitAndVerifyProposal(request: TxRequest, bytes: Uint8Array) {
  * QR," just waiting on a sealed reply instead of a camera frame. */
 function waitForBleMessage(session: BleSession, timeoutMs = 15_000): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    let unsubscribe: () => void;
+    // Both callbacks below only ever RUN after this synchronous
+    // initialization completes, so `unsubscribe` is always assigned by the
+    // time either fires -- no separate `let` + later-assignment needed.
     const timer = setTimeout(() => {
       unsubscribe();
       reject(new Error('timed out waiting for a BLE reply'));
     }, timeoutMs);
-    unsubscribe = session.onMessage((plaintext) => {
+    const unsubscribe = session.onMessage((plaintext) => {
       clearTimeout(timer);
       unsubscribe();
       resolve(plaintext);
@@ -186,18 +188,20 @@ export default function PayScreen() {
   }, []);
 
   useEffect(() => {
-    void refreshConnectivity();
     // A single mount-time probe goes stale the moment real connectivity
     // changes (e.g. WiFi toggled off) -- nothing else was re-triggering it,
     // so the badge could show "online" indefinitely after actually going
     // offline. Re-probe periodically so it's a live gauge, not a one-shot
     // snapshot. 5s -- comfortably above probeServerReachable's own 1500ms
     // timeout so probes never overlap, frequent enough to feel live.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshConnectivity();
     const interval = setInterval(() => void refreshConnectivity(), 5000);
     return () => clearInterval(interval);
   }, [refreshConnectivity]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (identity) void refreshBalance();
   }, [identity, refreshBalance]);
 
@@ -291,6 +295,7 @@ export default function PayScreen() {
   }, [identity]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (identity) void refreshIncoming();
   }, [identity, refreshIncoming]);
 
@@ -492,6 +497,7 @@ export default function PayScreen() {
   }, [identity]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (identity) void refreshPending();
   }, [identity, refreshPending]);
 
@@ -792,14 +798,14 @@ export default function PayScreen() {
         <View style={styles.section}>
           <Text style={styles.error}>{error}</Text>
           {retryBytes && role === 'receive' && receiveStep === 'awaiting-peer-payload' && (
-            <TouchableOpacity style={styles.button} onPress={() => void handleRetrySubmission()}>
+            <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => void handleRetrySubmission()}>
               <Text style={styles.buttonText}>Retry submission</Text>
             </TouchableOpacity>
           )}
           {/* Unconditional escape hatch from any step -- a failure on one
               side otherwise strands the other side waiting for something
               that's never coming, with no way back except force-quitting. */}
-          <TouchableOpacity style={styles.button} onPress={resetFlow}>
+          <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={resetFlow}>
             <Text style={styles.buttonText}>Start over</Text>
           </TouchableOpacity>
         </View>
@@ -820,7 +826,7 @@ export default function PayScreen() {
           {role === 'receive' && (
             <View style={styles.section}>
               {receiveStep === 'idle' && (
-                <TouchableOpacity style={styles.button} onPress={() => void handleStartRequest()}>
+                <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => void handleStartRequest()}>
                   <Text style={styles.buttonText}>Request payment</Text>
                 </TouchableOpacity>
               )}
@@ -830,7 +836,7 @@ export default function PayScreen() {
                   {bleStatusLabel(bleStatus) && (
                     <Text style={[styles.readoutText, { color: bleStatusColor(bleStatus) }]}>{bleStatusLabel(bleStatus)}</Text>
                   )}
-                  <TouchableOpacity style={styles.button} onPress={() => setReceiveStep('awaiting-peer-payload')}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => setReceiveStep('awaiting-peer-payload')}>
                     <Text style={styles.buttonText}>Scan their response</Text>
                   </TouchableOpacity>
                 </>
@@ -845,7 +851,7 @@ export default function PayScreen() {
                   </Text>
                   <Text style={styles.rowLabel}>Receipt (for the payer to verify, if they need it):</Text>
                   <QrWithCopyableText value={settledReceipt.qr} />
-                  <TouchableOpacity style={styles.button} onPress={resetFlow}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={resetFlow}>
                     <Text style={styles.buttonText}>Start over</Text>
                   </TouchableOpacity>
                 </>
@@ -859,7 +865,7 @@ export default function PayScreen() {
                     {intent.status} -- {formatMinorUnits(BigInt(intent.amount))} {intent.currency} from {intent.senderDeviceId.slice(0, 8)}
                   </Text>
                   {intent.status === 'INCOMING' && (
-                    <TouchableOpacity
+                    <TouchableOpacity accessibilityRole="button"
                       style={[styles.smallButton, checkingId === intent.txUuid && styles.buttonDisabled]}
                       disabled={checkingId === intent.txUuid}
                       onPress={() => void handleCheckIncoming(intent)}
@@ -875,7 +881,7 @@ export default function PayScreen() {
           {role === 'send' && (
             <View style={styles.section}>
               {sendStep === 'idle' && (
-                <TouchableOpacity style={styles.button} onPress={() => setSendStep('scan-request')}>
+                <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => setSendStep('scan-request')}>
                   <Text style={styles.buttonText}>Scan a payment request</Text>
                 </TouchableOpacity>
               )}
@@ -893,9 +899,9 @@ export default function PayScreen() {
                   )}
                   <View style={styles.row}>
                     <Text style={styles.rowLabel}>Amount (MAD)</Text>
-                    <TextInput style={styles.input} value={amountInput} onChangeText={setAmountInput} keyboardType="numeric" />
+                    <TextInput accessibilityLabel="Text input field" style={styles.input} value={amountInput} onChangeText={setAmountInput} keyboardType="numeric" />
                   </View>
-                  <TouchableOpacity style={styles.button} onPress={() => void handleContinue()}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => void handleContinue()}>
                     <Text style={styles.buttonText}>
                       {derivedMode === ConnectivityMode.MODE_C ? 'Continue' : 'Sign (biometric prompt)'}
                     </Text>
@@ -905,7 +911,7 @@ export default function PayScreen() {
               {sendStep === 'proposal-shown' && proposalQr && (
                 <>
                   <QrWithCopyableText value={proposalQr} />
-                  <TouchableOpacity style={styles.button} onPress={() => setSendStep('awaiting-receipt')}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => setSendStep('awaiting-receipt')}>
                     <Text style={styles.buttonText}>Payee submitted it -- scan their receipt</Text>
                   </TouchableOpacity>
                 </>
@@ -915,7 +921,7 @@ export default function PayScreen() {
               )}
               {sendStep === 'confirm-offline' && (
                 <View style={styles.warningBox}>
-                  <Text style={styles.warningTitle}>You are sending without the bank's confirmation</Text>
+                  <Text style={styles.warningTitle}>You are sending without the bank&apos;s confirmation</Text>
                   <Text style={styles.warningText}>
                     This is a signed promise, not a completed transfer. If it fails to sync later (insufficient funds,
                     expired token), you bear the loss until it settles. Nothing is final until this device reconnects
@@ -925,7 +931,7 @@ export default function PayScreen() {
                     <Switch value={warningAcked} onValueChange={setWarningAcked} />
                     <Text style={styles.rowLabel}>I understand the risk</Text>
                   </View>
-                  <TouchableOpacity
+                  <TouchableOpacity accessibilityRole="button"
                     style={[styles.button, !warningAcked && styles.buttonDisabled]}
                     disabled={!warningAcked}
                     onPress={() => void handleSignAndQueue()}
@@ -945,7 +951,7 @@ export default function PayScreen() {
                       <QrWithCopyableText value={sendSettled.relayQr} />
                     </>
                   )}
-                  <TouchableOpacity style={styles.button} onPress={resetFlow}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={resetFlow}>
                     <Text style={styles.buttonText}>Start over</Text>
                   </TouchableOpacity>
                 </>
@@ -963,7 +969,7 @@ export default function PayScreen() {
                       {intent.recipientDeviceId.slice(0, 8)}
                     </Text>
                     {intent.syncStatus === 'PENDING' && (
-                      <TouchableOpacity
+                      <TouchableOpacity accessibilityRole="button"
                         style={styles.smallButton}
                         onPress={() => setInfoQrFor(infoQrFor === intent.txUuid ? null : intent.txUuid)}
                       >
@@ -991,7 +997,7 @@ export default function PayScreen() {
                   )}
                 </View>
               ))}
-              <TouchableOpacity
+              <TouchableOpacity accessibilityRole="button"
                 style={[styles.button, (syncing || pending.every((p) => p.syncStatus !== 'PENDING')) && styles.buttonDisabled]}
                 onPress={() => void handleSync()}
                 disabled={syncing || pending.every((p) => p.syncStatus !== 'PENDING')}

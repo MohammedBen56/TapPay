@@ -62,9 +62,16 @@ export function GlassButton({ label, onPress, variant = "primary", disabled, loa
       <Pressable
         disabled={isDisabled}
         onPressIn={() => {
+          // Reanimated's useSharedValue().value assignment IS the API (a
+          // mutable ref-like object the UI thread reads directly), not React
+          // state -- the compiler's static analysis doesn't know about
+          // Reanimated's model and flags every shared-value write as an
+          // illegal mutation.
+          // eslint-disable-next-line react-hooks/immutability
           scale.value = withSpring(0.97, { damping: 18, stiffness: 260 });
         }}
         onPressOut={() => {
+          // eslint-disable-next-line react-hooks/immutability -- see above
           scale.value = withSpring(1, { damping: 18, stiffness: 260 });
         }}
         onPress={() => {

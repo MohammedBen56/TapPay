@@ -124,14 +124,14 @@ export default function BleDemoScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>BLE GATT transport (M3 Milestone 2)</Text>
       <Text style={styles.subtitle}>
-        Drives the real BleGattTransport.kt + the authenticated session handshake (bleTransport.ts) on THIS phone's
-        radio only. Run this tab on two physical phones with opposite roles: one "Advertise", one "Connect" pointed
-        at the advertiser's device id below.
+        Drives the real BleGattTransport.kt + the authenticated session handshake (bleTransport.ts) on THIS phone&apos;s
+        radio only. Run this tab on two physical phones with opposite roles: one &quot;Advertise&quot;, one &quot;Connect&quot; pointed
+        at the advertiser&apos;s device id below.
       </Text>
 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Email</Text>
-        <TextInput
+        <TextInput accessibilityLabel="Text input field"
           style={styles.input}
           value={email}
           onChangeText={setEmail}
@@ -140,7 +140,7 @@ export default function BleDemoScreen() {
           autoCorrect={false}
         />
         {!identity && (
-          <TouchableOpacity style={styles.smallButton} onPress={() => void handleEnroll()} disabled={enrolling}>
+          <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={() => void handleEnroll()} disabled={enrolling}>
             <Text style={styles.smallButtonText}>{enrolling ? 'Enrolling…' : 'Enroll'}</Text>
           </TouchableOpacity>
         )}
@@ -148,7 +148,7 @@ export default function BleDemoScreen() {
 
       {identity && (
         <View style={styles.readout}>
-          <Text style={styles.readoutText}>own device_id (give this to the "Connect" side): {identity.deviceId}</Text>
+          <Text style={styles.readoutText}>own device_id (give this to the &quot;Connect&quot; side): {identity.deviceId}</Text>
           <Text style={styles.readoutText}>StrongBox: {identity.strongBoxBacked ? 'yes' : 'no (TEE fallback)'}</Text>
         </View>
       )}
@@ -158,13 +158,13 @@ export default function BleDemoScreen() {
       {identity && !session && (
         <>
           <View style={styles.row}>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button"
               style={[styles.roleButton, role === 'advertise' && styles.roleButtonActive]}
               onPress={() => setRole('advertise')}
             >
               <Text style={styles.smallButtonText}>Advertise (RECEIVE)</Text>
             </TouchableOpacity>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button"
               style={[styles.roleButton, role === 'connect' && styles.roleButtonActive]}
               onPress={() => setRole('connect')}
             >
@@ -175,7 +175,7 @@ export default function BleDemoScreen() {
           {role === 'connect' && (
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Target device_id</Text>
-              <TextInput
+              <TextInput accessibilityLabel="Text input field"
                 style={styles.input}
                 value={targetDeviceIdInput}
                 onChangeText={setTargetDeviceIdInput}
@@ -187,7 +187,7 @@ export default function BleDemoScreen() {
             </View>
           )}
 
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button"
             style={styles.button}
             onPress={() => void handleEstablish()}
             disabled={establishing || (role === 'connect' && targetDeviceIdInput.trim().length === 0)}
@@ -213,12 +213,12 @@ export default function BleDemoScreen() {
         <View style={styles.section}>
           <Text style={styles.settledText}>session established -- peer {session.peerDeviceId.slice(0, 8)}…</Text>
           <View style={styles.row}>
-            <TextInput style={styles.input} value={messageInput} onChangeText={setMessageInput} />
-            <TouchableOpacity style={styles.smallButton} onPress={() => void handleSend()}>
+            <TextInput accessibilityLabel="Text input field" style={styles.input} value={messageInput} onChangeText={setMessageInput} />
+            <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={() => void handleSend()}>
               <Text style={styles.smallButtonText}>Send</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.smallButton} onPress={closeSession}>
+          <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={closeSession}>
             <Text style={styles.smallButtonText}>Close session</Text>
           </TouchableOpacity>
         </View>

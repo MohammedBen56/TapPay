@@ -33,7 +33,7 @@ export function IdentityHeader({
     <View style={styles.container}>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Email</Text>
-        <TextInput
+        <TextInput accessibilityLabel="Text input field"
           style={styles.input}
           value={email}
           onChangeText={onEmailChange}
@@ -42,7 +42,7 @@ export function IdentityHeader({
           autoCorrect={false}
         />
         {!identity && (
-          <TouchableOpacity style={styles.smallButton} onPress={onEnroll} disabled={enrolling}>
+          <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={onEnroll} disabled={enrolling}>
             <Text style={styles.smallButtonText}>{enrolling ? 'Enrolling…' : 'Enroll'}</Text>
           </TouchableOpacity>
         )}
@@ -59,7 +59,7 @@ export function IdentityHeader({
           <Text style={styles.readoutText}>StrongBox: {identity.strongBoxBacked ? 'yes' : 'no (TEE fallback)'}</Text>
           <View style={styles.row}>
             <Text style={styles.balanceText}>{balance === null ? '—' : `${formatMinorUnits(balance)} MAD`}</Text>
-            <TouchableOpacity style={styles.smallButton} onPress={onRefreshBalance}>
+            <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={onRefreshBalance}>
               <Text style={styles.smallButtonText}>Refresh</Text>
             </TouchableOpacity>
           </View>

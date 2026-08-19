@@ -31,7 +31,7 @@ export function SegmentedRow<T extends string>({
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.segmentGroup}>
         {options.map((option) => (
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button"
             key={option}
             style={[styles.segment, option === value && styles.segmentActive]}
             onPress={() => onChange(option)}
@@ -72,13 +72,13 @@ export function ScanStep({ label, onManualSubmit }: { label: string; onManualSub
       {permission?.granted ? (
         <CameraView style={styles.camera} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={handleScanned} />
       ) : (
-        <TouchableOpacity style={styles.button} onPress={() => void requestPermission()}>
+        <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => void requestPermission()}>
           <Text style={styles.buttonText}>Grant camera permission</Text>
         </TouchableOpacity>
       )}
       <Text style={styles.orDivider}>-- or paste (one-phone testing) --</Text>
       <View style={styles.row}>
-        <TextInput
+        <TextInput accessibilityLabel="Text input field"
           style={styles.input}
           value={manualInput}
           onChangeText={setManualInput}
@@ -87,7 +87,7 @@ export function ScanStep({ label, onManualSubmit }: { label: string; onManualSub
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <TouchableOpacity style={styles.smallButton} onPress={() => onManualSubmit(manualInput.trim())}>
+        <TouchableOpacity accessibilityRole="button" style={styles.smallButton} onPress={() => onManualSubmit(manualInput.trim())}>
           <Text style={styles.smallButtonText}>Submit</Text>
         </TouchableOpacity>
       </View>

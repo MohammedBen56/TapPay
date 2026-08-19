@@ -53,6 +53,53 @@ export default function SignInScreen(): React.JSX.Element {
     finishBiometricPrompt();
   };
 
+  if (status === "locked") {
+    return (
+      <ScreenBackground style={styles.center}>
+        <Animated.View entering={FadeInDown.duration(400)} style={styles.promptWrap}>
+          <Card style={styles.promptCard}>
+            <View style={styles.promptIcon}>
+              <Ionicons name="lock-closed" size={32} color={colors.bone} />
+            </View>
+            <Text style={styles.promptTitle}>Session locked</Text>
+            <Text style={styles.promptBody}>
+              {biometricEnabled && !usePasswordEntry
+                ? "Verify it's you to keep going."
+                : "Enter your password to keep going."}
+            </Text>
+            {biometricEnabled && !usePasswordEntry ? (
+              <>
+                <GlassButton
+                  label="Unlock with biometrics"
+                  onPress={() => void handleBiometricSignIn()}
+                  loading={biometricSubmitting}
+                  style={styles.promptButton}
+                />
+                <Pressable onPress={() => setUsePasswordEntry(true)} accessibilityRole="button">
+                  <Text style={styles.switchLabel}>Use password instead</Text>
+                </Pressable>
+              </>
+            ) : (
+              <View style={styles.gap}>
+                <TextField
+                  label="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoComplete="password"
+                  placeholder="••••••••"
+                  onSubmitEditing={() => void handlePasswordSignIn()}
+                />
+                {loginError ? <Text style={styles.errorBanner}>{loginError}</Text> : null}
+                <GlassButton label="Unlock" onPress={() => void handlePasswordSignIn()} loading={submitting} disabled={!password} />
+              </View>
+            )}
+          </Card>
+        </Animated.View>
+      </ScreenBackground>
+    );
+  }
+
   if (status === "awaitingBiometricPrompt") {
     return (
       <ScreenBackground style={styles.center}>

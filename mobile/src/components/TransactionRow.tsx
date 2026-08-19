@@ -10,7 +10,7 @@ export function TransactionRow({ tx }: { tx: TransactionSummary }): React.JSX.El
   const date = new Date(tx.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 
   return (
-    <Pressable
+    <Pressable accessibilityRole="button"
       onPress={() => router.push({ pathname: "/transfer/[txUuid]", params: { txUuid: tx.tx_uuid } })}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

@@ -1,8 +1,10 @@
 import type { MeResponse } from "@tappay/shared";
 import * as LocalAuthentication from "expo-local-authentication";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
+import { INACTIVITY_LOCK_THRESHOLD_MS } from "../config/inactivityLock";
 import {
   clearBiometricRefreshToken,
   getRefreshTokenViaBiometric,
@@ -21,7 +23,18 @@ import { getTokens, setTokens } from "./tokenStore";
 // lets the user through to (tabs). Only entered after a PASSWORD login when
 // biometric hardware is available and not yet enabled -- a biometric login
 // has nothing new to offer here.
-type AuthStatus = "loading" | "signedOut" | "awaitingBiometricPrompt" | "signedIn";
+//
+// "locked" is entered when a signed-in session returns to the foreground
+// after sitting backgrounded past INACTIVITY_LOCK_THRESHOLD_MS -- a lock
+// screen, not a forced sign-out: the session (tokens, account data) stays
+// intact, sign-in.tsx just re-gates access behind a fresh biometric-or-
+// password check, reusing loginWithBiometric()/loginWithPassword() as-is.
+// Applies regardless of whether biometric is enabled -- a password-only
+// user gets locked out the same as a biometric user, and re-enters with
+// password (loginWithPassword already resolves straight to "signedIn"
+// when biometric isn't enabled, since there's no enrollment prompt to
+// interpose).
+type AuthStatus = "loading" | "signedOut" | "awaitingBiometricPrompt" | "locked" | "signedIn";
 
 interface AuthContextValue {
   status: AuthStatus;
@@ -42,6 +55,20 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// Test-only seam for the inactivity lock's elapsed-time check
+// (__tests__/AuthContext.test.tsx) -- real code never calls the setter.
+// Mocking global Date.now directly is fragile here: React's own scheduler
+// reads it internally too, which desyncs a small fixed sequence of
+// `mockReturnValueOnce` calls in ways that have nothing to do with this
+// file's own two call sites. A dedicated, real-by-default function is a
+// smaller, more honest seam than fighting that. Exported as a getter/setter
+// pair, not a mutable `let` binding, since an imported `let` is a read-only
+// live view in every other module -- it can't be reassigned from outside.
+let clockNow: () => number = () => Date.now();
+export function setClockForTesting(fn: () => number): void {
+  clockNow = fn;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [status, setStatus] = useState<AuthStatus>("loading");
@@ -72,6 +99,48 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Kept in sync with `status` via the effect below so the AppState
+  // listener (registered once, not re-subscribed on every status change)
+  // always reads the current value instead of a stale closure.
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  // Inactivity lock (Ship List Phase 5). Records when the app leaves the
+  // foreground; if it returns after INACTIVITY_LOCK_THRESHOLD_MS or more,
+  // and a session was signed in the whole time, flips to "locked" instead
+  // of leaving sensitive data on screen. `backgroundedAt` is a ref, not
+  // state -- every background/foreground transition doesn't need a
+  // re-render, only the (rare) transition into "locked" does.
+  useEffect(() => {
+    const backgroundedAt = { current: null as number | null };
+    const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      if (nextState === "active") {
+        const wasBackgroundedAt = backgroundedAt.current;
+        backgroundedAt.current = null;
+        if (wasBackgroundedAt === null) return;
+        if (statusRef.current !== "signedIn") return;
+        const elapsedMs = clockNow() - wasBackgroundedAt;
+        if (elapsedMs >= INACTIVITY_LOCK_THRESHOLD_MS) {
+          setStatus("locked");
+        }
+        return;
+      }
+      // "background" is the reliable signal on Android (this app's only
+      // target platform, CLAUDE.md §1); "inactive" also fires briefly
+      // during transient interruptions (e.g. the biometric prompt itself
+      // taking focus) -- recording a timestamp on either is harmless since
+      // only elapsed time at the NEXT "active" transition matters, and a
+      // last-write-wins overwrite from a second background/inactive event
+      // before returning to foreground is exactly the behavior wanted.
+      if (statusRef.current === "signedIn") {
+        backgroundedAt.current = clockNow();
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   const refreshAccount = useCallback(async () => {
