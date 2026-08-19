@@ -3,9 +3,9 @@ import { p256 } from "@noble/curves/nist.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { randomBytes as nobleRandomBytes } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { decodeSessionHello, encodeSessionHello } from "./cbor.js";
-import { signCoseSign1, verifyCoseSign1, type Signer } from "./cose.js";
-import type { SessionHello } from "../types.js";
+import { decodeDeviceCredential, decodeSessionHello, encodeSessionHello } from "./cbor.js";
+import { decodeCoseSign1Unverified, signCoseSign1, verifyCoseSign1, type Signer } from "./cose.js";
+import type { DeviceCredential, SessionHello } from "../types.js";
 
 /**
  * Authenticated session ECDH (CLAUDE.md §5's "code that does not exist yet"
@@ -66,6 +66,11 @@ export interface CreateSessionHelloParams {
   deviceId: Uint8Array;
   ephPublicKey: Uint8Array;
   sign: Signer;
+  /** This device's own server-signed DeviceCredential, COSE_Sign1 bytes
+   * verbatim (M3 Milestone 3) -- see SessionHello.own_credential's doc
+   * comment (types.ts) for why this rides inside the hello instead of
+   * requiring the PEER to fetch it live. */
+  ownCredentialCose: Uint8Array;
   now?: number;
 }
 
@@ -79,8 +84,46 @@ export async function createSessionHello(params: CreateSessionHelloParams): Prom
     device_id: params.deviceId,
     eph_pubkey: params.ephPublicKey,
     ts: params.now ?? Date.now(),
+    own_credential: params.ownCredentialCose,
   };
   return signCoseSign1(encodeSessionHello(hello), params.sign);
+}
+
+/**
+ * Verifies `credentialCose` (a DeviceCredential's COSE_Sign1 bytes) against
+ * `serverPublicKey` -- the pinned key, always available locally, no network
+ * call -- and cross-checks its decoded `device_id` against `expectedDeviceId`.
+ * The signature alone is not enough: it only proves the server vouches for
+ * *some* device's pubkey, not that it's the one claimed here -- a
+ * substituted-but-genuinely-signed credential for a different (e.g.
+ * attacker-enrolled) device would otherwise pass. Same two-part check
+ * `mobile/src/crypto/identity.ts`'s `fetchPeerCredential` already does for
+ * the live-fetch path; factored out here so `deriveSessionKey` and any
+ * future embedded-credential caller share one implementation instead of
+ * duplicating this exact check (CLAUDE.md §10's "5-instance confirmed
+ * pattern" -- a client-suppliable identifier insufficiently bound to what it
+ * should be scoped to). Returns `null` on any failure, never throws.
+ */
+export function verifyEmbeddedCredential(
+  credentialCose: Uint8Array,
+  expectedDeviceId: Uint8Array,
+  serverPublicKey: Uint8Array,
+): DeviceCredential | null {
+  let verified: ReturnType<typeof verifyCoseSign1>;
+  try {
+    verified = verifyCoseSign1(credentialCose, serverPublicKey);
+  } catch {
+    return null;
+  }
+  if (!verified) return null;
+  let credential: DeviceCredential;
+  try {
+    credential = decodeDeviceCredential(verified.payload);
+  } catch {
+    return null;
+  }
+  if (!bytesEqual(credential.device_id, expectedDeviceId)) return null;
+  return credential;
 }
 
 function compareBytes(a: Uint8Array, b: Uint8Array): number {
@@ -91,7 +134,14 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
   return a.length - b.length;
 }
 
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+/** Exported for reuse anywhere two byte arrays need constant-shape comparison
+ * (e.g. the mobile receipt-binding checks in TapScreen.tsx/OfflineScreen.tsx --
+ * comparing a decoded TxReceipt's recipient_device_id/receiver_nonce against
+ * what the caller itself generated or signed). Not cryptographic
+ * constant-time comparison (this codebase's signature verification already
+ * gets that for free from the underlying ECDSA library) -- just a correct,
+ * shared byte-equality check instead of N duplicated ad-hoc ones. */
+export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return compareBytes(a, b) === 0;
 }
 
@@ -122,14 +172,18 @@ export interface DeriveSessionKeyParams {
   ourDeviceId: Uint8Array;
   ourEphSecretKey: Uint8Array;
   ourEphPublicKey: Uint8Array;
-  /** The peer's SessionHello, as a signed COSE_Sign1 -- verified against
-   * `peerIdentityPubkey` before anything inside it is trusted. */
+  /** The peer's SessionHello, as a signed COSE_Sign1 -- verified against the
+   * identity_pubkey extracted from its OWN embedded `own_credential` field
+   * (see verifyEmbeddedCredential), not a pubkey the caller already has. */
   peerHelloCose: Uint8Array;
-  /** The peer's ENROLLED identity_pubkey, learned only via a server-signed
-   * DeviceCredential (see mobile/src/crypto/identity.ts's fetchPeerCredential)
-   * -- never trust-on-first-use from the hello message itself, or this
-   * function would authenticate nothing. */
-  peerIdentityPubkey: Uint8Array;
+  /** The pinned server public key (M3 Milestone 3) -- always available
+   * locally, no network call needed. Replaces the old `peerIdentityPubkey`
+   * param: the peer's identity_pubkey is no longer supplied by the caller,
+   * it's extracted from the peer's own embedded, server-signed credential
+   * and verified against THIS key instead. Never trust-on-first-use from
+   * the hello message itself, or this function would authenticate nothing
+   * -- the embedded credential's own signature is what still does that. */
+  serverPublicKey: Uint8Array;
   now?: number;
   helloWindowMs?: number;
 }
@@ -142,6 +196,26 @@ export interface DeriveSessionKeyParams {
  * see this module's top comment on why there is no fallback path.
  */
 export function deriveSessionKey(params: DeriveSessionKeyParams): Uint8Array | null {
+  // Read the hello's fields WITHOUT trusting them yet -- same "read kid,
+  // then verify" pattern used elsewhere in this codebase (e.g.
+  // SessionDemoScreen.tsx's remote-peer mode). Nothing decoded here is
+  // trusted until the outer signature check below succeeds; it's only used
+  // to learn WHICH pubkey that check should even be run against, since the
+  // peer's identity_pubkey now travels inside its own hello (M3 Milestone 3)
+  // instead of being supplied by the caller from a live fetch.
+  let unverifiedHello: SessionHello;
+  try {
+    unverifiedHello = decodeSessionHello(decodeCoseSign1Unverified(params.peerHelloCose).payload);
+  } catch {
+    return null;
+  }
+
+  const credential = verifyEmbeddedCredential(unverifiedHello.own_credential, unverifiedHello.device_id, params.serverPublicKey);
+  if (!credential) return null;
+
+  // THIS is the actual authentication step: re-verify the WHOLE hello
+  // (including the fields read unverified above) against the pubkey the
+  // embedded credential just proved really belongs to `unverifiedHello.device_id`.
   // verifyCoseSign1 itself never throws, but the malformed-CBOR decode inside
   // it does (decodeCoseSign1Structure) -- wrapped so garbage peerHelloCose
   // hits this function's own documented "null on ANY failure" contract
@@ -149,7 +223,7 @@ export function deriveSessionKey(params: DeriveSessionKeyParams): Uint8Array | n
   // wouldn't expect. Found via /security-review.
   let verified: ReturnType<typeof verifyCoseSign1>;
   try {
-    verified = verifyCoseSign1(params.peerHelloCose, params.peerIdentityPubkey);
+    verified = verifyCoseSign1(params.peerHelloCose, credential.identity_pubkey);
   } catch {
     return null;
   }

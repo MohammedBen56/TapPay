@@ -5,7 +5,8 @@ import { p256 } from "@noble/curves/nist.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { describe, expect, it } from "vitest";
-import { encodeSessionHello } from "../cbor.js";
+import type { DeviceCredential } from "../../types.js";
+import { encodeDeviceCredential, encodeSessionHello } from "../cbor.js";
 import { signCoseSign1, type Signer } from "../cose.js";
 import { verifyEcdsaP256 } from "../ecdsa.js";
 import {
@@ -14,6 +15,7 @@ import {
   generateEphemeralKeyPair,
   openSessionMessage,
   sealSessionMessage,
+  verifyEmbeddedCredential,
 } from "../session.js";
 
 const VECTORS_DIR = fileURLToPath(new URL("./vectors/", import.meta.url));
@@ -33,6 +35,22 @@ function makeIdentity(): { sign: Signer; publicKey: Uint8Array } {
   const { secretKey, publicKey } = p256.keygen();
   const sign: Signer = async (bytesToSign) => p256.sign(sha256(bytesToSign), secretKey, { lowS: false }).toBytes("compact");
   return { sign, publicKey };
+}
+
+/** Stands in for the server's own identity key across this file's tests --
+ * every DeviceCredential fixture below is "signed" by this key, and every
+ * deriveSessionKey call verifies against its public half (serverPublicKey),
+ * mirroring how getServerPublicKeyBytes() is a single pinned constant in
+ * production (M3 Milestone 3: credentials now travel embedded inside a
+ * SessionHello instead of being fetched live from the server). */
+const server = makeIdentity();
+
+/** Builds a genuinely server-signed DeviceCredential COSE_Sign1, the exact
+ * shape SessionHello.own_credential carries -- standing in for what
+ * GET /devices/:id/credential would return for a real enrolled device. */
+async function makeCredential(deviceId: Uint8Array, identityPubkey: Uint8Array): Promise<Uint8Array> {
+  const credential: DeviceCredential = { device_id: deviceId, identity_pubkey: identityPubkey, issued_at: Date.now() };
+  return signCoseSign1(encodeDeviceCredential(credential), server.sign);
 }
 
 describe("ECDH shared-secret known-answer vectors (Wycheproof secp256r1 ecpoint)", () => {
@@ -216,6 +234,38 @@ describe("generateEphemeralKeyPair", () => {
   });
 });
 
+describe("verifyEmbeddedCredential", () => {
+  it("accepts a genuinely server-signed credential for the expected device", async () => {
+    const deviceId = bytes16(0xaa);
+    const identity = makeIdentity();
+    const credentialCose = await makeCredential(deviceId, identity.publicKey);
+    const result = verifyEmbeddedCredential(credentialCose, deviceId, server.publicKey);
+    expect(result).not.toBeNull();
+    expect(Buffer.from(result!.identity_pubkey).equals(Buffer.from(identity.publicKey))).toBe(true);
+  });
+
+  it("rejects a genuine credential for the WRONG device_id (substitution)", async () => {
+    const realDeviceId = bytes16(0xaa);
+    const claimedDeviceId = bytes16(0xbb);
+    const identity = makeIdentity();
+    // Genuinely server-signed, just for a different device than claimed.
+    const credentialCose = await makeCredential(realDeviceId, identity.publicKey);
+    expect(verifyEmbeddedCredential(credentialCose, claimedDeviceId, server.publicKey)).toBeNull();
+  });
+
+  it("rejects a credential not signed by the pinned server key at all", async () => {
+    const deviceId = bytes16(0xaa);
+    const identity = makeIdentity();
+    const notTheServer = makeIdentity();
+    const credentialCose = await makeCredential(deviceId, identity.publicKey); // signed by `server`
+    expect(verifyEmbeddedCredential(credentialCose, deviceId, notTheServer.publicKey)).toBeNull();
+  });
+
+  it("returns null (never throws) for garbage bytes", () => {
+    expect(verifyEmbeddedCredential(new Uint8Array([1, 2, 3]), bytes16(0xaa), server.publicKey)).toBeNull();
+  });
+});
+
 describe("deriveSessionKey: symmetry", () => {
   it("A and B derive the byte-identical key, regardless of who is 'first'", async () => {
     const txUuid = bytes16(1);
@@ -227,8 +277,20 @@ describe("deriveSessionKey: symmetry", () => {
     const aliceEph = generateEphemeralKeyPair();
     const bobEph = generateEphemeralKeyPair();
 
-    const aliceHello = await createSessionHello({ txUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: alice.sign });
-    const bobHello = await createSessionHello({ txUuid, deviceId: bobDeviceId, ephPublicKey: bobEph.publicKey, sign: bob.sign });
+    const aliceHello = await createSessionHello({
+      txUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: aliceEph.publicKey,
+      sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
+    });
+    const bobHello = await createSessionHello({
+      txUuid,
+      deviceId: bobDeviceId,
+      ephPublicKey: bobEph.publicKey,
+      sign: bob.sign,
+      ownCredentialCose: await makeCredential(bobDeviceId, bob.publicKey),
+    });
 
     const aliceKey = deriveSessionKey({
       txUuid,
@@ -236,7 +298,7 @@ describe("deriveSessionKey: symmetry", () => {
       ourEphSecretKey: aliceEph.secretKey,
       ourEphPublicKey: aliceEph.publicKey,
       peerHelloCose: bobHello,
-      peerIdentityPubkey: bob.publicKey,
+      serverPublicKey: server.publicKey,
     });
     const bobKey = deriveSessionKey({
       txUuid,
@@ -244,7 +306,7 @@ describe("deriveSessionKey: symmetry", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: aliceHello,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
 
     expect(aliceKey).not.toBeNull();
@@ -258,25 +320,24 @@ describe("deriveSessionKey: symmetry", () => {
 });
 
 describe("ADV-07: MITM relay is rejected without any BLE hardware", () => {
-  it("relay substitutes its own ephemeral key, signed with its own identity -- deriveSessionKey returns null", async () => {
+  it("relay embeds its OWN genuine credential but claims to be Alice's device_id -- rejected by the device_id cross-check", async () => {
     const txUuid = bytes16(2);
-    const alice = makeIdentity();
     const mallory = makeIdentity(); // the relay's own identity, NOT alice's
     const aliceDeviceId = bytes16(0xaa);
-    const aliceEph = generateEphemeralKeyPair();
+    const malloryDeviceId = bytes16(0xcc);
     const bobDeviceId = bytes16(0xbb);
     const bobEph = generateEphemeralKeyPair();
 
-    // The relay can't forge Alice's signature, so it substitutes its OWN
-    // ephemeral key and signs with ITS OWN identity, hoping Bob verifies
-    // against whatever pubkey the relay claims is Alice's. Bob must be using
-    // Alice's real ENROLLED identity_pubkey (fetched via DeviceCredential,
-    // never trust-on-first-use) for this to be caught.
+    // Mallory can't forge Alice's signature, and she can't get the server to
+    // sign a credential claiming she's Alice -- the best she can do is embed
+    // her OWN genuine, genuinely server-signed credential while claiming
+    // Alice's device_id in the hello's own device_id field.
     const relayHello = await createSessionHello({
       txUuid,
       deviceId: aliceDeviceId, // claims to be Alice
-      ephPublicKey: generateEphemeralKeyPair().publicKey, // relay's own ephemeral key
-      sign: mallory.sign, // but signed by the relay's identity, not Alice's
+      ephPublicKey: generateEphemeralKeyPair().publicKey,
+      sign: mallory.sign,
+      ownCredentialCose: await makeCredential(malloryDeviceId, mallory.publicKey), // but her OWN real credential
     });
 
     const bobKey = deriveSessionKey({
@@ -285,24 +346,57 @@ describe("ADV-07: MITM relay is rejected without any BLE hardware", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: relayHello,
-      peerIdentityPubkey: alice.publicKey, // Bob verifies against Alice's REAL enrolled key
+      serverPublicKey: server.publicKey,
+    });
+
+    expect(bobKey).toBeNull();
+  });
+
+  it("relay fabricates a credential it has no server signature for -- rejected at the credential-verification step", async () => {
+    const txUuid = bytes16(2);
+    const mallory = makeIdentity();
+    const notTheServer = makeIdentity(); // mallory doesn't hold the server's key
+    const aliceDeviceId = bytes16(0xaa);
+    const bobDeviceId = bytes16(0xbb);
+    const bobEph = generateEphemeralKeyPair();
+
+    const fakeCredential: DeviceCredential = { device_id: aliceDeviceId, identity_pubkey: mallory.publicKey, issued_at: Date.now() };
+    const fabricatedCredentialCose = await signCoseSign1(encodeDeviceCredential(fakeCredential), notTheServer.sign);
+
+    const relayHello = await createSessionHello({
+      txUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: generateEphemeralKeyPair().publicKey,
+      sign: mallory.sign,
+      ownCredentialCose: fabricatedCredentialCose,
+    });
+
+    const bobKey = deriveSessionKey({
+      txUuid,
+      ourDeviceId: bobDeviceId,
+      ourEphSecretKey: bobEph.secretKey,
+      ourEphPublicKey: bobEph.publicKey,
+      peerHelloCose: relayHello,
+      serverPublicKey: server.publicKey, // Bob only trusts the REAL server key
     });
 
     expect(bobKey).toBeNull();
   });
 
   it("a relay that can only forward bytes (no identity key of either party) cannot insert its own ephemeral key into the session -- both sides still derive the identical key, unaffected", async () => {
-    // The previous test covers the relay's only real lever: substituting its
-    // OWN identity + ephemeral key and hoping the victim verifies against the
-    // wrong pubkey. This test covers the other naive MITM idea -- a relay that
-    // just forwards signed hellos unmodified, hoping to sit on the wire and
-    // observe -- and shows it gains nothing: since deriveSessionKey only
-    // trusts a hello's eph_pubkey after verifying it was signed by the
-    // claimed device's REAL enrolled identity key (never trust-on-first-use),
-    // there is no step in the middle where a passive relay could substitute
-    // its own ephemeral key without forging a signature it doesn't have the
-    // means to forge. A relay's own ephemeral keypair (generated here to model
-    // the attempt) simply never appears in either side's derivation.
+    // The previous two tests cover the relay's only real levers: substituting
+    // its own identity+credential (caught by the device_id cross-check) or
+    // fabricating a credential (caught by the signature check). This test
+    // covers the other naive MITM idea -- a relay that just forwards signed
+    // hellos unmodified, hoping to sit on the wire and observe -- and shows
+    // it gains nothing: since deriveSessionKey only trusts a hello's
+    // eph_pubkey after verifying BOTH its embedded credential (against the
+    // pinned server key) AND its own signature (against the pubkey that
+    // credential just proved belongs to the claimed device), there is no
+    // step in the middle where a passive relay could substitute its own
+    // ephemeral key without forging something it doesn't have the means to
+    // forge. A relay's own ephemeral keypair (generated here to model the
+    // attempt) simply never appears in either side's derivation.
     const txUuid = bytes16(3);
     const alice = makeIdentity();
     const bob = makeIdentity();
@@ -312,8 +406,20 @@ describe("ADV-07: MITM relay is rejected without any BLE hardware", () => {
     const bobEph = generateEphemeralKeyPair();
     const relayEph = generateEphemeralKeyPair(); // never used below -- that's the point
 
-    const aliceHello = await createSessionHello({ txUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: alice.sign });
-    const bobHello = await createSessionHello({ txUuid, deviceId: bobDeviceId, ephPublicKey: bobEph.publicKey, sign: bob.sign });
+    const aliceHello = await createSessionHello({
+      txUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: aliceEph.publicKey,
+      sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
+    });
+    const bobHello = await createSessionHello({
+      txUuid,
+      deviceId: bobDeviceId,
+      ephPublicKey: bobEph.publicKey,
+      sign: bob.sign,
+      ownCredentialCose: await makeCredential(bobDeviceId, bob.publicKey),
+    });
 
     const aliceKey = deriveSessionKey({
       txUuid,
@@ -321,7 +427,7 @@ describe("ADV-07: MITM relay is rejected without any BLE hardware", () => {
       ourEphSecretKey: aliceEph.secretKey,
       ourEphPublicKey: aliceEph.publicKey,
       peerHelloCose: bobHello, // relayed byte-for-byte, unmodified
-      peerIdentityPubkey: bob.publicKey,
+      serverPublicKey: server.publicKey,
     });
     const bobKey = deriveSessionKey({
       txUuid,
@@ -329,7 +435,7 @@ describe("ADV-07: MITM relay is rejected without any BLE hardware", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: aliceHello, // relayed byte-for-byte, unmodified
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
 
     expect(aliceKey).not.toBeNull();
@@ -353,7 +459,13 @@ describe("deriveSessionKey: fail-closed cases", () => {
 
   it("rejects a hello whose signature was tampered with", async () => {
     const { txUuid, alice, aliceDeviceId, bobDeviceId, aliceEph, bobEph } = baseParams();
-    const aliceHello = await createSessionHello({ txUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: alice.sign });
+    const aliceHello = await createSessionHello({
+      txUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: aliceEph.publicKey,
+      sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
+    });
     const tampered = new Uint8Array(aliceHello);
     tampered[tampered.length - 1] ^= 0xff;
 
@@ -363,7 +475,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: tampered,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
     expect(key).toBeNull();
   });
@@ -371,7 +483,13 @@ describe("deriveSessionKey: fail-closed cases", () => {
   it("rejects a hello for the wrong tx_uuid", async () => {
     const { alice, aliceDeviceId, bobDeviceId, aliceEph, bobEph } = baseParams();
     const wrongTxUuid = bytes16(0xee);
-    const aliceHello = await createSessionHello({ txUuid: wrongTxUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: alice.sign });
+    const aliceHello = await createSessionHello({
+      txUuid: wrongTxUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: aliceEph.publicKey,
+      sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
+    });
 
     const key = deriveSessionKey({
       txUuid: bytes16(4), // Bob expects a different transaction
@@ -379,14 +497,20 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: aliceHello,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
     expect(key).toBeNull();
   });
 
   it("rejects a reflected hello (peer device_id equals our own)", async () => {
     const { txUuid, alice, aliceDeviceId, aliceEph } = baseParams();
-    const aliceHello = await createSessionHello({ txUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: alice.sign });
+    const aliceHello = await createSessionHello({
+      txUuid,
+      deviceId: aliceDeviceId,
+      ephPublicKey: aliceEph.publicKey,
+      sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
+    });
     const ourOwnEph = generateEphemeralKeyPair();
 
     const key = deriveSessionKey({
@@ -395,7 +519,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: ourOwnEph.secretKey,
       ourEphPublicKey: ourOwnEph.publicKey,
       peerHelloCose: aliceHello,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
     expect(key).toBeNull();
   });
@@ -408,6 +532,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
       deviceId: aliceDeviceId,
       ephPublicKey: aliceEph.publicKey,
       sign: alice.sign,
+      ownCredentialCose: await makeCredential(aliceDeviceId, alice.publicKey),
       now: staleTs,
     });
 
@@ -417,25 +542,8 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: aliceHello,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
       helloWindowMs: 30_000,
-    });
-    expect(key).toBeNull();
-  });
-
-  it("rejects a well-formed hello signed by the WRONG identity key (not the claimed peer's)", async () => {
-    const { txUuid, aliceDeviceId, bobDeviceId, aliceEph, bobEph } = baseParams();
-    const impostor = makeIdentity();
-    const helloSignedByImpostor = await createSessionHello({ txUuid, deviceId: aliceDeviceId, ephPublicKey: aliceEph.publicKey, sign: impostor.sign });
-
-    const realAlicePubkey = makeIdentity().publicKey; // stands in for Alice's real enrolled key
-    const key = deriveSessionKey({
-      txUuid,
-      ourDeviceId: bobDeviceId,
-      ourEphSecretKey: bobEph.secretKey,
-      ourEphPublicKey: bobEph.publicKey,
-      peerHelloCose: helloSignedByImpostor,
-      peerIdentityPubkey: realAlicePubkey,
     });
     expect(key).toBeNull();
   });
@@ -452,15 +560,17 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: coseBytes,
-      peerIdentityPubkey: signer.publicKey,
+      serverPublicKey: server.publicKey,
     });
     expect(key).toBeNull();
   });
 
   it("returns null (never throws) for peerHelloCose bytes that aren't a COSE_Sign1 structure at all", () => {
-    // decodeCoseSign1Structure (inside verifyCoseSign1) throws on this input --
-    // deriveSessionKey must catch that itself to honor its own documented
-    // "null on ANY failure" contract. Found via /security-review.
+    // decodeCoseSign1Structure (inside decodeCoseSign1Unverified, called
+    // before any signature check to learn which pubkey to verify against)
+    // throws on this input -- deriveSessionKey must catch that itself to
+    // honor its own documented "null on ANY failure" contract. Found via
+    // /security-review.
     const { bobDeviceId, bobEph } = baseParams();
     const garbage = new Uint8Array([0xff, 0xfe, 0xfd]);
 
@@ -471,7 +581,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
         ourEphSecretKey: bobEph.secretKey,
         ourEphPublicKey: bobEph.publicKey,
         peerHelloCose: garbage,
-        peerIdentityPubkey: makeIdentity().publicKey,
+        serverPublicKey: server.publicKey,
       }),
     ).not.toThrow();
   });
@@ -484,6 +594,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
       deviceId: shortDeviceId,
       ephPublicKey: generateEphemeralKeyPair().publicKey,
       sign: alice.sign,
+      ownCredentialCose: await makeCredential(shortDeviceId, alice.publicKey),
     });
 
     const key = deriveSessionKey({
@@ -492,7 +603,7 @@ describe("deriveSessionKey: fail-closed cases", () => {
       ourEphSecretKey: bobEph.secretKey,
       ourEphPublicKey: bobEph.publicKey,
       peerHelloCose: oddHello,
-      peerIdentityPubkey: alice.publicKey,
+      serverPublicKey: server.publicKey,
     });
     expect(key).toBeNull();
   });
@@ -513,11 +624,13 @@ describe("test-helper sanity", () => {
 
   it("encodeSessionHello round-trips through createSessionHello's signature", async () => {
     const identity = makeIdentity();
+    const deviceId = bytes16(10);
     const hello = await createSessionHello({
       txUuid: bytes16(9),
-      deviceId: bytes16(10),
+      deviceId,
       ephPublicKey: generateEphemeralKeyPair().publicKey,
       sign: identity.sign,
+      ownCredentialCose: await makeCredential(deviceId, identity.publicKey),
     });
     expect(hello.length).toBeGreaterThan(0);
   });
