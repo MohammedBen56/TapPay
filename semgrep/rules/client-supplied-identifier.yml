@@ -1,0 +1,29 @@
+rules:
+  - id: client-supplied-identifier
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      account_id/user_id read from request.body/params/query on what looks
+      like an authed route. CLAUDE.md §10's recurring pattern across both the
+      original P2P code and the v2 auth system: a client-suppliable
+      identifier insufficiently bound to what it should be scoped to (the
+      tx_uuid settlement-slot hijack, the bearer-shaped receipt, the
+      unverified-email enrollment gap are all this same bug family). Every
+      v2 route that reads or writes account-scoped data resolves the account
+      from the JWT's aid/sub claims (request.user.aid / request.user.sub),
+      never from a client-supplied id in the body/params/query --
+      beneficiaries.ts's owner_user_id scoping is the pattern to follow.
+    patterns:
+      - pattern-either:
+          - pattern: request.body.$FIELD
+          - pattern: request.params.$FIELD
+          - pattern: request.query.$FIELD
+          - pattern: |
+              const { $FIELD, ... } = request.body
+          - pattern: |
+              const { $FIELD, ... } = request.params
+          - pattern: |
+              const { $FIELD, ... } = request.query
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: (?i).*(account_id|accountid|user_id|userid).*

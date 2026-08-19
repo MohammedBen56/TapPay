@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Keeps ci.yml's full-commit-SHA pins current -- Dependabot understands
+  # the `@<sha> # vX.Y.Z` convention and opens a PR bumping both the SHA
+  # and the trailing version comment together when a pinned action
+  # releases. Without this, a SHA pin is a snapshot that silently stops
+  # getting security fixes the moment it's written.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Same cooldown rationale as pnpm-workspace.yaml's minimumReleaseAge:
+    # a newly-published action release is where a compromised action would
+    # first appear, and most such releases are caught and pulled within
+    # days. Dependabot's own zizmor audit flags anything under 7.
+    cooldown:
+      default-days: 7
+
+  # The workspace root -- covers server, mobile, and packages/shared via
+  # pnpm-workspace.yaml (Dependabot resolves the whole workspace from a
+  # single root entry when it finds pnpm-lock.yaml here).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # minimumReleaseAge (pnpm-workspace.yaml) already delays a fresh
+    # `pnpm install` from picking up a version published in the last 24h;
+    # this keeps Dependabot's own PRs from proposing one even sooner.
+    versioning-strategy: increase
+    cooldown:
+      default-days: 7

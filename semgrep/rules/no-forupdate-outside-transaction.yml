@@ -1,0 +1,15 @@
+rules:
+  - id: no-forupdate-outside-transaction
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      SELECT ... FOR UPDATE called on the ambient `db` connection instead of
+      an open transaction. A row lock taken outside a transaction releases
+      the instant the statement completes -- it never serializes anything,
+      because there's no surrounding transaction left for a concurrent
+      caller to actually wait on. Every FOR UPDATE in this codebase goes
+      through db/locking.ts's lockAccount/lockAccountsInOrder, which take a
+      `trx: Transaction<Database>` from inside db.transaction().execute(...)
+      -- do the same here, or move this call into db/locking.ts if it's a
+      new locking primitive.
+    pattern: db. ... .forUpdate(...)

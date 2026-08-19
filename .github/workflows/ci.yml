@@ -5,15 +5,35 @@ on:
   push:
     branches: [main]
 
+# Least-privilege default: every job gets read-only GITHUB_TOKEN access
+# unless a job explicitly grants more (none do, here) -- a compromised
+# dependency executing during `pnpm install`/a test script can't use the
+# workflow's own token to push, open PRs, or modify releases.
+permissions:
+  contents: read
+
+# Cancel a superseded run on the same ref (e.g. a second push to the same PR)
+# rather than letting both run to completion -- avoids two runs' service
+# containers (Postgres/Redis on fixed host ports) racing each other, and
+# saves runner minutes on a fast-moving branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: Lint, migrate, test (server + shared)
     runs-on: ubuntu-latest
 
     # Native Android build stays out of CI (needs the SDK, heavy) -- this job
     # covers server + shared TS lint/test only, per the M1 plan.
     services:
       postgres:
-        image: postgres:16
+        # Pinned by digest, not just the `16` tag -- `docker pull postgres:16`
+        # can silently resolve to a different image on a different day. Re-
+        # verify with `docker inspect postgres:16 --format='{{index .RepoDigests 0}}'`
+        # after a deliberate version bump.
+        image: postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5
         env:
           POSTGRES_DB: tappay
           POSTGRES_USER: tappay
@@ -26,24 +46,58 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Backs @fastify/rate-limit's distributed store (server/src/redis.ts) --
+      # the app now connects to Redis unconditionally at boot (ADR-0008-
+      # adjacent hardening pass), so the test suite needs a real instance,
+      # not just Postgres.
+      redis:
+        image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       DATABASE_URL: postgres://tappay:tappay@localhost:5432/tappay
+      REDIS_URL: redis://localhost:6379
       SERVER_PORT: 3000
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 11.15.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # JWT_SECRET/APP_DB_PASSWORD only exist as long as this job's Postgres
+      # service does -- generated fresh per run rather than hardcoded, both
+      # so a compromised runner never learns a real secret and so this file
+      # doesn't carry a static high-entropy string for gitleaks (below) to
+      # flag as a false-positive leaked credential. config.ts's envSecret()
+      # rejects anything under 32 chars or equal to .env.example's literal
+      # placeholder, so a real value is required even here.
+      - name: Generate ephemeral CI-only secrets (JWT signing key, app DB role password)
+        run: |
+          JWT_SECRET=$(openssl rand -hex 32)
+          APP_DB_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::$JWT_SECRET"
+          echo "::add-mask::$APP_DB_PASSWORD"
+          echo "JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+          echo "APP_DB_PASSWORD=$APP_DB_PASSWORD" >> "$GITHUB_ENV"
+          echo "APP_DATABASE_URL=postgres://tappay_app:${APP_DB_PASSWORD}@localhost:5432/tappay" >> "$GITHUB_ENV"
 
       - name: Lint (server + shared + mobile; tsc --noEmit on each)
         run: pnpm -r lint
@@ -56,3 +110,92 @@ jobs:
 
       - name: Test server
         run: pnpm --filter server test
+
+  security:
+    name: Secret scan, dependency audit, filesystem scan, workflow audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # gitleaks scans full history, not just the diff
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.15.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No GITLEAKS_LICENSE: only required for GitHub Organization
+          # accounts, not personal accounts (this repo's owner).
+
+      # Runs BEFORE `pnpm install`, deliberately -- trivy's pnpm scanner
+      # reads pnpm-lock.yaml directly and needs no materialized
+      # node_modules, and scanning `.` with node_modules already present
+      # pulls in every dependency's own vendored fixtures/example apps
+      # (found by direct reproduction: a stray Gemfile.lock inside
+      # react-native-qrcode-svg's own Example/ directory surfaced unrelated
+      # Ruby CVEs). Exclusions live in .trivyignore (auto-read), documented
+      # there and kept in sync with pnpm-workspace.yaml's
+      # auditConfig.ignoreGhsas -- same findings, two tools. Reproduce
+      # locally with:
+      #   docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:latest fs \
+      #     --scanners vuln,secret,misconfig --severity CRITICAL,HIGH \
+      #     --ignore-unfixed --exit-code 1 \
+      #     --skip-dirs node_modules,mobile/android/.gradle,mobile/android/app/build .
+      - name: Filesystem vulnerability + misconfig scan (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-dirs: node_modules,mobile/android/.gradle,mobile/android/app/build
+
+      # Exclusions live in pnpm-workspace.yaml's auditConfig.ignoreGhsas, not
+      # here -- pnpm reads that automatically, and it's where each entry's
+      # justification is documented and kept next to minimumReleaseAge.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency vulnerability audit (production deps only)
+        run: pnpm audit --prod --audit-level=high
+
+      # semgrep/rules/*.yml: 5 custom rules, each citing the incident it
+      # encodes (a real Postgres constraint violation reaching a client
+      # verbatim, the tx_uuid settlement-slot hijack family, ADV-06's
+      # lock-ordering proof, CLAUDE.md §5's bigint-money rule). Each has a
+      # same-directory fixture file (semgrep --test's own convention -- a
+      # separate tests/ directory, as an earlier draft of this assumed,
+      # does not work) with a violating case (// ruleid:) and a safe case
+      # (// ok:). --test validates the rules against their own fixtures
+      # before the second step below runs them for real against this repo.
+      - name: Validate custom Semgrep rules against their fixtures
+        run: |
+          pip install semgrep==1.173.0
+          semgrep --test semgrep/rules
+
+      - name: Custom Semgrep rules (server + shared + mobile)
+        run: semgrep --config semgrep/rules server/src packages/shared/src mobile/src mobile/app --exclude '**/__tests__/**' --error
+
+      # Statically audits THIS repo's own workflow files (this file
+      # included) for injection via untrusted `${{ }}` expansion,
+      # overly-broad permissions, unpinned actions, and similar --
+      # zizmorcore/zizmor-action's own README recommends
+      # `persist-credentials: false` on checkout, already applied above.
+      - name: Audit GitHub Actions workflows (zizmor)
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          # This repo doesn't carry a GitHub Advanced Security subscription
+          # (private repo, personal account) -- SARIF-upload mode requires
+          # it. Without this, findings still fail the job; they just don't
+          # also appear in a Security tab that isn't available here.
+          advanced-security: false

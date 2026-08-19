@@ -1,0 +1,144 @@
+{
+  "title": "TapPay Ledger",
+  "uid": "tappay-ledger",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ledger Imbalance (minor units)",
+      "description": "SUM(amount) across the entire journal table. Must always read exactly 0 -- any other value is a correctness bug, not a performance signal (CLAUDE.md §5).",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "tappay_ledger_imbalance_minor", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 },
+              { "color": "red", "value": -2147483647 }
+            ]
+          },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "BALANCED", "color": "green" } } }]
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Unbalanced Transactions",
+      "description": "Per-tx_uuid postings that don't sum to zero. A clean imbalance panel does NOT rule this out -- two offsetting broken transactions cancel in the global sum but each still violates the invariant.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "tappay_ledger_unbalanced_tx_count", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Tripwire Last Check",
+      "description": "Time since the last completed invariant check. A tripwire that silently stopped running looks identical to one that always passes without this -- see TappayLedgerTripwireStale in alerts.yml.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "time() - tappay_ledger_last_check_timestamp_seconds", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 60 }, { "color": "red", "value": 120 }]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Settlement Outcome Breakdown",
+      "description": "POST /transfers attempts by outcome. tx_uuid_conflict is a security tripwire, not a health metric -- its rate should be flat zero; any nonzero rate means an attempted settlement-slot hijack (CLAUDE.md §5), see TappayTxUuidConflictDetected in alerts.yml.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (outcome) (rate(tappay_transfer_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "tx_uuid_conflict" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineWidth", "value": 3 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "settled" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "sum"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 5,
+      "title": "Account Lock Wait (heatmap)",
+      "description": "Wall-clock time for lockAccount's SELECT ... FOR UPDATE round trip. A rising p99 here is the earliest signal of lock contention on a hot account, well before it shows up as request latency.",
+      "type": "heatmap",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(tappay_account_lock_wait_seconds_bucket[5m])) by (le)",
+          "format": "heatmap",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": { "unit": "s" },
+        "color": { "mode": "scheme", "scheme": "Spectral", "reverse": true }
+      }
+    }
+  ]
+}
