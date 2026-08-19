@@ -1,9 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { encodeOfflineIou, signCoseSign1, uuidToBytes, type OfflineIou } from "@tappay/shared";
-import { afterAll, describe, expect, it } from "vitest";
-import { buildApp } from "../../app.js";
-import { config } from "../../config.js";
-import { db } from "../../db/kysely.js";
+import {
+  decodeTxReceipt,
+  encodeOfflineIou,
+  encodeTxProposal,
+  signCoseSign1,
+  uuidToBytes,
+  verifyCoseSign1,
+  type OfflineIou,
+  type TxProposal,
+} from "@tappay/shared";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { bankAdapter } from "../../../adapters/index.js";
+import { buildApp } from "../../../app.js";
+import { config } from "../../../config.js";
+import { serverPublicKeyBytes } from "../../../crypto/serverSigner.js";
+import { db } from "../../../db/kysely.js";
 import { createEnrolledDevice, type TestDevice } from "./testHelpers.js";
 
 async function buildSignedIou(
@@ -29,7 +40,7 @@ async function buildSignedIou(
 }
 
 describe("/tx/sync", () => {
-  const app = buildApp();
+  const app = buildApp({ rateLimit: false, proximityRoutes: true });
 
   async function getFreshnessToken(deviceId: string): Promise<string> {
     const res = await app.inject({ method: "GET", url: `/devices/${deviceId}/freshness-token` });
@@ -266,6 +277,173 @@ describe("/tx/sync", () => {
     expect(journalRows).toHaveLength(0); // mallory's transfer never executed
     const row = await db.selectFrom("offline_intents").select("status").where("tx_uuid", "=", txUuid).executeTakeFirstOrThrow();
     expect(row.status).toBe("PENDING"); // untouched -- alice's real intent can still resume later
+  });
+
+  it("rejects a batch larger than the configured max intents per request", async () => {
+    const alice = await createEnrolledDevice(10_000n);
+    const token = await getFreshnessToken(alice.deviceId);
+    const oversized = { device_id: alice.deviceId, intents: Array.from({ length: config.syncMaxIntentsPerBatch + 1 }, () => ({ cose_iou: "x", freshness_token: token })) };
+
+    const response = await app.inject({ method: "POST", url: "/tx/sync", payload: oversized });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("InvalidRequest");
+  });
+
+  it("rejects an IOU addressed to an unenrolled recipient as FAILED_UNKNOWN_RECIPIENT, reported not persisted", async () => {
+    const alice = await createEnrolledDevice(10_000n);
+    const token = await getFreshnessToken(alice.deviceId);
+    // A recipient device_id that was never enrolled -- not expected in
+    // practice (the recipient's own request QR is what carries this id), but
+    // a real blind spot: offline_intents.receiver_id is NOT NULL / FK'd, so
+    // this can never be admitted as a durable row.
+    // recipient.signer is never read by buildSignedIou (only the sender signs
+    // the IOU) -- alice's signer is reused here purely to satisfy the type,
+    // avoiding an extra throwaway createEnrolledDevice call.
+    const ghostRecipient: TestDevice = { deviceId: randomUUID(), accountId: "", signer: alice.signer };
+    const { base64, txUuid } = await buildSignedIou(alice, ghostRecipient, 100n, 1n);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: { device_id: alice.deviceId, intents: [{ cose_iou: base64, freshness_token: token }] },
+    });
+
+    expect(response.json().results[0].status).toBe("FAILED_UNKNOWN_RECIPIENT");
+    const intentRows = await db.selectFrom("offline_intents").selectAll().where("tx_uuid", "=", txUuid).execute();
+    expect(intentRows).toHaveLength(0);
+    const deviceRow = await db
+      .selectFrom("devices")
+      .select("last_seq")
+      .where("device_id", "=", Buffer.from(uuidToBytes(alice.deviceId)))
+      .executeTakeFirstOrThrow();
+    expect(deviceRow.last_seq).toBe(0n); // never admitted -- same posture as FAILED_SELF_PAYMENT
+  });
+
+  it("rejects a non-positive amount as FAILED_INVALID_AMOUNT, reported not persisted, without failing the rest of the batch", async () => {
+    const [alice, bob] = await Promise.all([createEnrolledDevice(10_000n), createEnrolledDevice(0n)]);
+    const token = await getFreshnessToken(alice.deviceId);
+    const bad = await buildSignedIou(alice, bob, 0n, 1n);
+    const ok = await buildSignedIou(alice, bob, 100n, 2n);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: {
+        device_id: alice.deviceId,
+        intents: [
+          { cose_iou: bad.base64, freshness_token: token },
+          { cose_iou: ok.base64, freshness_token: token },
+        ],
+      },
+    });
+
+    const statuses = response.json().results.map((r: { status: string }) => r.status);
+    expect(statuses).toEqual(["FAILED_INVALID_AMOUNT", "SETTLED"]);
+    const intentRows = await db.selectFrom("offline_intents").selectAll().where("tx_uuid", "=", bad.txUuid).execute();
+    expect(intentRows).toHaveLength(0); // never admitted -- response-only, same posture as FAILED_SELF_PAYMENT
+  });
+
+  it("a Mode C receipt names the recipient device with a zero receiver_nonce", async () => {
+    const [alice, bob] = await Promise.all([createEnrolledDevice(10_000n), createEnrolledDevice(0n)]);
+    const token = await getFreshnessToken(alice.deviceId);
+    const { base64 } = await buildSignedIou(alice, bob, 750n, 1n);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: { device_id: alice.deviceId, intents: [{ cose_iou: base64, freshness_token: token }] },
+    });
+
+    expect(response.json().results[0].status).toBe("SETTLED");
+    const verified = verifyCoseSign1(Buffer.from(response.json().results[0].receipt, "base64"), serverPublicKeyBytes)!;
+    const receipt = decodeTxReceipt(verified.payload);
+    expect(Array.from(receipt.recipient_device_id)).toEqual(Array.from(uuidToBytes(bob.deviceId)));
+    expect(Array.from(receipt.receiver_nonce)).toEqual(Array.from(new Uint8Array(16)));
+  });
+
+  it("a Mode C IOU cannot hijack a tx_uuid already settled via /tx/submit (cross-mode case)", async () => {
+    // The sync.ts guard above keys on offline_intents, which has no row for a
+    // tx_uuid that settled through /tx/submit -- this is the case only the
+    // transfer()-level guard closes.
+    const [alice, bob] = await Promise.all([createEnrolledDevice(10_000n), createEnrolledDevice(0n)]);
+    const txUuid = randomUUID();
+    const proposal: TxProposal = {
+      tx_uuid: uuidToBytes(txUuid),
+      sender_device_id: uuidToBytes(alice.deviceId),
+      recipient_device_id: uuidToBytes(bob.deviceId),
+      amount: 1_000n,
+      currency: "MAD",
+      receiver_nonce: uuidToBytes(randomUUID()),
+      ts: Date.now(),
+    };
+    const proposalCose = await signCoseSign1(encodeTxProposal(proposal), alice.signer);
+    const submitRes = await app.inject({
+      method: "POST",
+      url: "/tx/submit",
+      payload: { cose_sign1: Buffer.from(proposalCose).toString("base64") },
+    });
+    expect(submitRes.statusCode).toBe(200);
+
+    const mallory = await createEnrolledDevice(10_000n);
+    const mallowToken = await getFreshnessToken(mallory.deviceId);
+    const forged = await buildSignedIou(mallory, bob, 1_000n, 1n, { txUuid });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: { device_id: mallory.deviceId, intents: [{ cose_iou: forged.base64, freshness_token: mallowToken }] },
+    });
+
+    expect(response.json().results[0].status).toBe("FAILED_CONFLICT");
+    expect(response.json().results[0].receipt).toBeUndefined();
+    const journalRows = await db.selectFrom("journal").selectAll().where("tx_uuid", "=", txUuid).execute();
+    expect(journalRows).toHaveLength(2); // still just alice/bob's original pair
+  });
+
+  it("a bank-adapter fault after admission leaves the intent PENDING (not FAILED_*, not a 500), and resubmitting the byte-identical intent afterward resumes and settles", async () => {
+    const [alice, bob] = await Promise.all([createEnrolledDevice(10_000n), createEnrolledDevice(0n)]);
+    const token = await getFreshnessToken(alice.deviceId);
+    const { base64, txUuid } = await buildSignedIou(alice, bob, 1_000n, 1n);
+
+    // Overrides only the next call -- admission (its own, separate, already-
+    // committed transaction) is untouched; only the settlement transfer()
+    // call faults.
+    const transferSpy = vi.spyOn(bankAdapter, "transfer").mockRejectedValueOnce(new Error("simulated bank fault"));
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: { device_id: alice.deviceId, intents: [{ cose_iou: base64, freshness_token: token }] },
+    });
+
+    expect(first.statusCode).toBe(200); // the fault must not abort the batch as an unhandled 500
+    expect(first.json().results[0].status).toBe("PENDING");
+    expect(first.json().results[0].receipt).toBeUndefined();
+
+    const deviceRow = await db
+      .selectFrom("devices")
+      .select("last_seq")
+      .where("device_id", "=", Buffer.from(uuidToBytes(alice.deviceId)))
+      .executeTakeFirstOrThrow();
+    expect(deviceRow.last_seq).toBe(1n); // admission's transaction had already committed before the fault
+
+    const intentRow = await db.selectFrom("offline_intents").select("status").where("tx_uuid", "=", txUuid).executeTakeFirstOrThrow();
+    expect(intentRow.status).toBe("PENDING"); // never written FAILED_* for a transport-level fault, not this device's own failure
+
+    // The spy's mockRejectedValueOnce only overrides the one call above --
+    // this resubmission of the byte-identical intent hits the real adapter.
+    const second = await app.inject({
+      method: "POST",
+      url: "/tx/sync",
+      payload: { device_id: alice.deviceId, intents: [{ cose_iou: base64, freshness_token: token }] },
+    });
+
+    expect(second.json().results[0].status).toBe("SETTLED");
+    expect(second.json().results[0].receipt).toBeTypeOf("string");
+    const journalRows = await db.selectFrom("journal").selectAll().where("tx_uuid", "=", txUuid).execute();
+    expect(journalRows).toHaveLength(2); // settled exactly once, not doubled by the resume
+
+    transferSpy.mockRestore();
   });
 
   it("freshness-token endpoint returns 403 for a device whose attestation was never verified", async () => {

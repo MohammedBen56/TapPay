@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { decodeDeviceCredential, verifyCoseSign1 } from "@tappay/shared";
 import { describe, expect, it } from "vitest";
-import { buildApp } from "../../app.js";
-import { serverPublicKeyBytes } from "../../crypto/serverSigner.js";
+import { buildApp } from "../../../app.js";
+import { serverPublicKeyBytes } from "../../../crypto/serverSigner.js";
 import { createEnrolledDevice } from "./testHelpers.js";
 
 describe("GET /devices/:deviceId/credential", () => {
-  const app = buildApp();
+  const app = buildApp({ rateLimit: false, proximityRoutes: true });
 
   it("returns a server-signed credential binding the device's real identity_pubkey", async () => {
     const alice = await createEnrolledDevice(0n);

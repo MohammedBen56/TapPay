@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect, type Generated } from "kysely";
 import pg from "pg";
+import { config } from "../config.js";
 
 // BIGINT (oid 20) comes back as a JS string by default; register bigint parsing
 // once, globally, before any query runs. This is the load-bearing line that makes
@@ -23,6 +24,9 @@ export interface AccountsTable {
   currency: Generated<string>;
   is_mint: Generated<boolean>;
   created_at: Generated<Date>;
+  /** v2: nullable -- the seeded mint account (001_accounts.cjs) has neither. */
+  display_name: string | null;
+  rib: string | null;
 }
 
 export interface DevicesTable {
@@ -73,7 +77,8 @@ export type OfflineIntentStatus =
   | "SETTLED"
   | "FAILED_INSUFFICIENT"
   | "FAILED_EXPIRED"
-  | "FAILED_SEQUENCE_REGRESSION";
+  | "FAILED_SEQUENCE_REGRESSION"
+  | "FAILED_CONFLICT";
 
 export interface OfflineIntentsTable {
   tx_uuid: string;
@@ -86,18 +91,84 @@ export interface OfflineIntentsTable {
   synced_at: Generated<Date>;
 }
 
+/** v2 auth (013_customer_credentials.cjs): a separate table from accounts so
+ * the mint account never needs a fake password hash. */
+export interface CustomerCredentialsTable {
+  customer_id: string;
+  user_id: string;
+  password_hash: string;
+  failed_attempts: Generated<number>;
+  locked_until: Date | null;
+  created_at: Generated<Date>;
+}
+
+/** v2 auth (014_auth_sessions.cjs): refresh tokens, stored as a hash only,
+ * rotated on every use. See routes/auth.ts (M1c) for the rotation/revocation
+ * logic that reads and writes this table. */
+export interface AuthSessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: Buffer;
+  family_id: string;
+  issued_at: Generated<Date>;
+  expires_at: Date;
+  revoked_at: Date | null;
+  replaced_by: string | null;
+}
+
+/** v2 Send flow (015_beneficiaries.cjs): stores the RIB, not a resolved
+ * account_id -- a beneficiary is a typed bank coordinate, resolved at send
+ * time. */
+export interface BeneficiariesTable {
+  id: Generated<string>;
+  owner_user_id: string;
+  display_name: string;
+  rib: string;
+  created_at: Generated<Date>;
+}
+
+/** v2 transfer metadata (016_transfers.cjs): one row per settled transfer,
+ * carrying the human-readable reference -- kept off journal deliberately, see
+ * the migration's own comment. */
+export interface TransfersTable {
+  tx_uuid: string;
+  from_account_id: string;
+  to_account_id: string;
+  amount: bigint;
+  currency: string;
+  reference: string;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   accounts: AccountsTable;
   devices: DevicesTable;
   journal: JournalTable;
   reservations: ReservationsTable;
   offline_intents: OfflineIntentsTable;
+  customer_credentials: CustomerCredentialsTable;
+  auth_sessions: AuthSessionsTable;
+  beneficiaries: BeneficiariesTable;
+  transfers: TransfersTable;
 }
 
-export function createDb(connectionString: string = process.env.DATABASE_URL!): Kysely<Database> {
+export function createDb(connectionString: string = config.appDatabaseUrl): Kysely<Database> {
   return new Kysely<Database>({
     dialect: new PostgresDialect({
-      pool: new pg.Pool({ connectionString }),
+      pool: new pg.Pool({
+        connectionString,
+        max: config.dbPoolMax,
+        connectionTimeoutMillis: config.dbPoolConnectionTimeoutMs,
+        idleTimeoutMillis: config.dbPoolIdleTimeoutMs,
+        statement_timeout: config.dbStatementTimeoutMs,
+        lock_timeout: config.dbLockTimeoutMs,
+        idle_in_transaction_session_timeout: config.dbIdleInTransactionSessionTimeoutMs,
+        // Distinguishes this pool from the sweeper/migrations/a raw psql
+        // session in pg_stat_activity -- cheap, and it's the difference
+        // between "something is hung" and "something is hung, and it's the
+        // app pool, not the sweeper" when actually debugging it live.
+        application_name: "tappay-server",
+      }),
     }),
   });
 }

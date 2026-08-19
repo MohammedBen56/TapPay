@@ -14,16 +14,38 @@ export async function sweepExpiredReservations(db: Kysely<Database>): Promise<nu
   return Number(result.numUpdatedRows);
 }
 
-export interface Sweeper {
-  stop: () => void;
+export interface SweeperLogger {
+  error: (obj: unknown, msg?: string) => void;
 }
 
-export function startSweeper(db: Kysely<Database>, intervalMs: number): Sweeper {
+export interface Sweeper {
+  /** Stops scheduling new ticks AND awaits any tick already in flight, so a
+   * caller doing `await sweeper.stop()` before `db.destroy()` (index.ts's
+   * shutdown sequence) can't have the pool torn down mid-UPDATE under it --
+   * this is a second concurrent writer against the same database, exactly
+   * like every route, and needs the same drain-before-destroy treatment. */
+  stop: () => Promise<void>;
+}
+
+export function startSweeper(db: Kysely<Database>, intervalMs: number, logger: SweeperLogger): Sweeper {
+  let inFlight: Promise<number> | null = null;
+
   const timer = setInterval(() => {
-    sweepExpiredReservations(db).catch((err: unknown) => {
-      console.error("reservation sweeper tick failed", err);
-    });
+    inFlight = sweepExpiredReservations(db)
+      .catch((err: unknown) => {
+        logger.error(err, "reservation sweeper tick failed");
+        return 0;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
   }, intervalMs);
   timer.unref(); // don't keep the process alive just for the sweeper
-  return { stop: () => clearInterval(timer) };
+
+  return {
+    stop: async () => {
+      clearInterval(timer);
+      if (inFlight) await inFlight;
+    },
+  };
 }

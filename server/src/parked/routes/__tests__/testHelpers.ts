@@ -1,7 +1,7 @@
 import { randomUUID, generateKeyPairSync, sign as nodeSign } from "node:crypto";
 import { uuidToBytes, type Signer } from "@tappay/shared";
-import { compressedPublicKeyFromKeyObject } from "../../crypto/ecPublicKey.js";
-import { db, MINT_ACCOUNT_ID } from "../../db/kysely.js";
+import { compressedPublicKeyFromKeyObject } from "../../../crypto/ecPublicKey.js";
+import { db, MINT_ACCOUNT_ID } from "../../../db/kysely.js";
 
 export interface TestDevice {
   deviceId: string;

@@ -1,4 +1,4 @@
-import { db } from "../db/kysely.js";
+import { db } from "../../db/kysely.js";
 
 /** Shared by /tx/submit and /tx/sync: resolves a raw device_id to its enrolled
  * device row + the account it settles against. Both routes need the exact same
