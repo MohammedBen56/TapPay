@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shown in Android's NFC/tap-and-pay settings if the user opens it.
+         This app never appears in the "default payment app" picker because
+         the AID group below is category="other", not "payment". -->
+    <string name="nfc_hce_service_description">TapPay profile sharing</string>
+</resources>

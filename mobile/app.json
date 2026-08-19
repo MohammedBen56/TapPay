@@ -5,7 +5,9 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "scheme": "tappay",
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -17,11 +19,33 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["./plugins/withBlePermissions.js", "expo-camera"]
+    "plugins": [
+      "./plugins/withBlePermissions.js",
+      "./plugins/withNfcCompileSdkFix.js",
+      "expo-camera",
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      "expo-splash-screen",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "TapPay needs access to your photos to import a QR code image."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "TapPay uses Face ID to sign you in without your password."
+        }
+      ],
+      "react-native-nfc-manager"
+    ]
   }
 }

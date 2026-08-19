@@ -18,6 +18,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 
 private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
 
+/** See generateIdentityKey's buildSpec doc comment for the full reasoning --
+ * kept as a named constant (not inlined) so the tradeoff has one place to
+ * read and one place to tune. */
+private const val AUTH_VALIDITY_DURATION_SECONDS = 20
+
 // Per-device alias, not a single fixed name: enrolling a second dev identity on
 // the same phone (M1 Step 9's one-phone QR test path, before phone B's usbipd
 // link is fixed) would otherwise silently overwrite the first identity's key.
@@ -54,7 +59,26 @@ class KeyStoreManager {
         .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
         .setDigests(KeyProperties.DIGEST_SHA256)
         .setUserAuthenticationRequired(true)
-        .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+        // M3 Milestone 3: a real BLE-accelerated send needs two DISTINCT sign
+        // operations back to back -- the session hello's ephemeral key, then
+        // the payment proposal itself -- and per-operation auth (duration=0)
+        // meant two separate biometric prompts for what the user experiences
+        // as one action. AUTH_VALIDITY_DURATION_SECONDS keeps the key usable
+        // for a short window after ONE successful biometric auth, a standard
+        // documented Android KeyStore pattern for exactly this "avoid
+        // re-prompting for a rapid, related sequence" case -- NOT a relaxation
+        // of the hardware-backed/biometric-gated invariant itself (the key
+        // remains completely unusable without a successful biometric auth;
+        // this only widens the post-auth window from zero to a few seconds).
+        // Real tradeoff, named explicitly: a device grabbed within this window
+        // immediately after a legitimate unlock has a brief opportunity to
+        // sign again without a fresh prompt. 20s comfortably covers the
+        // hello-then-proposal pair (bleTransport.ts's connectBleRadio/
+        // completeBleHandshake split, called back to back at "Sign" time) even
+        // under real BLE/UI latency, while keeping that window narrow.
+        // Applies only to NEWLY-GENERATED keys -- existing enrolled identities
+        // need re-enrollment to pick this up.
+        .setUserAuthenticationParameters(AUTH_VALIDITY_DURATION_SECONDS, KeyProperties.AUTH_BIOMETRIC_STRONG)
         .setAttestationChallenge(attestationChallenge)
         .setIsStrongBoxBacked(strongBox)
         .build()

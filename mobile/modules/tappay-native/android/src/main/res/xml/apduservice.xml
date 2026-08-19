@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AID here MUST match NfcHceService.AID exactly (hex of the same bytes:
+     0xF0 followed by ASCII "TAPPAY"). category="other", not "payment":
+     this is account-info sharing, not a payment applet, and "other" is
+     what keeps this app out of Android's default-payment-app picker
+     entirely. -->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/nfc_hce_service_description"
+    android:requireDeviceUnlock="false">
+    <aid-group
+        android:description="@string/nfc_hce_service_description"
+        android:category="other">
+        <aid-filter android:name="F0544150504159" />
+    </aid-group>
+</host-apdu-service>
