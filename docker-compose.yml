@@ -94,6 +94,22 @@ services:
       - "./caddy/certs:/certs:ro"
       - "caddydata:/data"
 
+  # Ship List Phase 3's chaos experiment (ops/chaos/, server/scripts/
+  # chaos-experiment.ts). Gated behind the `chaos` profile so it never
+  # starts with a plain `docker compose up` -- `docker compose --profile
+  # chaos up -d toxiproxy` brings it up on demand. Proxies real Postgres
+  # traffic through toxiproxy so faults (latency, connection drops) can be
+  # injected at the TCP level between the app and the database; a real
+  # `docker compose kill -s SIGKILL db` is the separate, more severe fault
+  # the chaos script also runs, independent of toxiproxy.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    profiles: [chaos]
+    ports:
+      - "8474:8474" # toxiproxy's own control REST API
+      - "15433:15433" # the proxied postgres connection point
+    depends_on: [db]
+
 # The server always runs on the host (pnpm --filter server dev), not in Docker
 # -- there is no server/Dockerfile. A `server` service under an `integration`
 # profile previously referenced `build: ./server`, which cannot build; removed

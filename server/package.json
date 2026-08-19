@@ -12,6 +12,7 @@
     "generate-server-key": "tsx scripts/generate-server-key.ts",
     "check-invariants": "dotenv -e ../.env -- tsx scripts/check-invariants.ts",
     "restore-drill": "dotenv -e ../.env -- tsx scripts/restore-drill.ts",
+    "chaos-experiment": "dotenv -e ../.env -- tsx scripts/chaos-experiment.ts",
     "test": "dotenv -e ../.env -- vitest run",
     "lint": "tsc --noEmit"
   },

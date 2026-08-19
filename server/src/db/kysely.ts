@@ -152,25 +152,48 @@ export interface Database {
   transfers: TransfersTable;
 }
 
+// Set by app.ts once Fastify's own logger exists (same pattern as
+// redis.ts's setRedisLogger) -- undefined only in the brief window before
+// app.ts runs, or for a script's own ad-hoc createDb() call that never
+// wires one in, both covered by the console fallback below.
+let dbLogger: { error: (obj: unknown, msg?: string) => void } | undefined;
+export function setDbLogger(logger: { error: (obj: unknown, msg?: string) => void }): void {
+  dbLogger = logger;
+}
+
 export function createDb(connectionString: string = config.appDatabaseUrl): Kysely<Database> {
-  return new Kysely<Database>({
-    dialect: new PostgresDialect({
-      pool: new pg.Pool({
-        connectionString,
-        max: config.dbPoolMax,
-        connectionTimeoutMillis: config.dbPoolConnectionTimeoutMs,
-        idleTimeoutMillis: config.dbPoolIdleTimeoutMs,
-        statement_timeout: config.dbStatementTimeoutMs,
-        lock_timeout: config.dbLockTimeoutMs,
-        idle_in_transaction_session_timeout: config.dbIdleInTransactionSessionTimeoutMs,
-        // Distinguishes this pool from the sweeper/migrations/a raw psql
-        // session in pg_stat_activity -- cheap, and it's the difference
-        // between "something is hung" and "something is hung, and it's the
-        // app pool, not the sweeper" when actually debugging it live.
-        application_name: "tappay-server",
-      }),
-    }),
+  const pool = new pg.Pool({
+    connectionString,
+    max: config.dbPoolMax,
+    connectionTimeoutMillis: config.dbPoolConnectionTimeoutMs,
+    idleTimeoutMillis: config.dbPoolIdleTimeoutMs,
+    statement_timeout: config.dbStatementTimeoutMs,
+    lock_timeout: config.dbLockTimeoutMs,
+    idle_in_transaction_session_timeout: config.dbIdleInTransactionSessionTimeoutMs,
+    // Distinguishes this pool from the sweeper/migrations/a raw psql
+    // session in pg_stat_activity -- cheap, and it's the difference
+    // between "something is hung" and "something is hung, and it's the
+    // app pool, not the sweeper" when actually debugging it live.
+    application_name: "tappay-server",
   });
+
+  // node-postgres's own documented gotcha, found here by direct
+  // reproduction (a real `docker compose kill -s SIGKILL db` during the
+  // Ship List Phase 3 chaos experiment): a Pool with no 'error' listener
+  // crashes the ENTIRE process the moment a backgrounded/idle client hits a
+  // connection-level error (exactly what killing Postgres produces on every
+  // idle pooled connection at once) -- Node's default behavior for an
+  // unhandled EventEmitter 'error' event is to throw, which closeWithGrace
+  // (index.ts) then correctly treats as fatal and shuts the whole server
+  // down for what was actually a transient, automatically-recoverable
+  // outage. pg.Pool already reconnects lazily on the next query once
+  // Postgres is back -- the ONLY thing missing was something to catch this
+  // event instead of letting it become an uncaught exception.
+  pool.on("error", (err: Error) => {
+    (dbLogger ?? console).error(err, "postgres pool error (idle/background client) -- pool will reconnect lazily on next use");
+  });
+
+  return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }
 
 export const db = createDb();
