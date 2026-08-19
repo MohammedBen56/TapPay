@@ -17,6 +17,26 @@ export interface CommitResult {
   failureReason?: string;
 }
 
+/** Binds a settlement's receipt to its intended recipient (TxReceipt's
+ * `recipient_device_id`/`receiver_nonce`) -- additive and optional so this
+ * doesn't break the seam's "a real bank would implement this with zero
+ * changes above it" contract; a caller that omits it just gets a receipt
+ * with no recipient binding, which reserve()/commit()'s bare-reservation
+ * path (no device-level context available at all) is the only current
+ * example of.
+ *
+ * `reference` (v2, docs/TapPay_v2_Technical_Design.md §4): the human-readable
+ * reference/reason string on a plain neobank transfer -- optional for the
+ * same reason the device fields are: the parked P2P proximity path
+ * (server/src/parked/routes/tx-cose.ts) never supplies one, and the seam's
+ * "zero changes above it" contract means adding a field can't force every
+ * existing caller to start passing it. */
+export interface TransferContext {
+  recipientDeviceId?: Uint8Array;
+  receiverNonce?: Uint8Array;
+  reference?: string;
+}
+
 export interface IBankAdapter {
   getAvailableBalance(accountId: string, currency: string): Promise<bigint>;
   reserve(
@@ -34,6 +54,7 @@ export interface IBankAdapter {
     toAccountId: string,
     amount: bigint,
     currency: string,
+    context?: TransferContext,
   ): Promise<CommitResult>;
 }
 
@@ -66,12 +87,56 @@ export interface TxProposal {
   ts: number; // unix ms
 }
 
-/** The payload CBOR-encoded inside the server's COSE_Sign1 receipt. */
+/**
+ * The payee's "Request" QR payload (unsigned, by design -- the payer's
+ * TxProposal is what's cryptographically bound to a transaction; this is
+ * just an invitation carrying the nonce that proposal must embed). Moved
+ * here from mobile/src/transport/qr.ts (Phase 4) so the unified payment flow
+ * (mobile/src/payments/paymentFlow.ts) can be exercised by this package's
+ * test suite -- mobile has no test runner of its own (`lint` is
+ * `tsc --noEmit` only).
+ *
+ * `receiver_online` is new here (the mobile-local version never had it): the
+ * payee's own self-assessed `GET /health` probe result at the moment they
+ * generated this QR, stamped in so the payer's mode-selection
+ * (evaluateConnectivity) has a receiver-side signal to combine with its own
+ * probe. It is a HINT only, never trusted for anything security-relevant --
+ * it only picks a choreography (Mode A/B/C); every choreography stays
+ * independently safe regardless of what this field claims (see TxReceipt's
+ * doc comment and the transfer()-level tx_uuid conflict guard for why).
+ */
+export interface TxRequest {
+  recipient_device_id: Uint8Array; // 16 bytes
+  receiver_nonce: Uint8Array; // 16 bytes
+  ts: number; // unix ms
+  receiver_online: boolean;
+}
+
+/** The payload CBOR-encoded inside the server's COSE_Sign1 receipt.
+ *
+ * `recipient_device_id` and `receiver_nonce` bind the receipt to a specific
+ * payee -- without them, a receipt is nothing more than a server-signed
+ * assertion that "some payment of this amount settled under this tx_uuid",
+ * verifiable by anyone but not bound to any party. That made it a bearer
+ * token: an attacker could settle a self-payment under a tx_uuid, then
+ * relay that same genuinely-valid receipt as if it were a completely
+ * different transaction to an unrelated recipient (worse than disclosure --
+ * settlement forgery, no money ever reaching the real recipient). Found via
+ * /security-review alongside the transfer()-level tx_uuid conflict guard
+ * (server/src/adapters/MockBankAdapter.ts) -- same underlying issue,
+ * client/attacker-suppliable identifiers insufficiently bound to what they
+ * should be scoped to, see CLAUDE.md §5.
+ *
+ * `receiver_nonce` is all-zero (16 bytes) for Mode C, which has no nonce
+ * concept in OfflineIou -- the recipient binding alone is Mode C's
+ * protection; see server/src/routes/sync.ts's context passthrough. */
 export interface TxReceipt {
   tx_uuid: Uint8Array;
   settled_at: number; // unix ms
   amount: bigint;
   currency: string;
+  recipient_device_id: Uint8Array; // 16 bytes
+  receiver_nonce: Uint8Array; // 16 bytes, all-zero for Mode C
 }
 
 /**
@@ -162,6 +227,19 @@ export interface SessionHello {
   device_id: Uint8Array; // 16 bytes -- the sender of THIS hello, not the peer
   eph_pubkey: Uint8Array; // 33-byte SEC1-compressed P-256, this session only
   ts: number; // unix ms, device clock at signing time
+  /** The sender's own server-signed DeviceCredential (GET
+   * /devices/:deviceId/credential's COSE_Sign1 response bytes, verbatim),
+   * carried inline so the receiving side can verify "this identity_pubkey
+   * really belongs to this device" purely offline against the pinned server
+   * key -- no live fetchPeerCredential network call needed on either side
+   * (M3 Milestone 3: found via live two-phone testing that requiring a live
+   * fetch broke BLE settlement the moment either party went offline, even
+   * though the radio connection itself didn't need one). Trust still comes
+   * entirely from the server's own signature over this credential, not from
+   * how it arrived -- see deriveSessionKey/verifyEmbeddedCredential
+   * (session.ts). Required, not legacy-tolerant: this is pre-release code
+   * with no deployed old-format clients to support. */
+  own_credential: Uint8Array;
 }
 
 /** Terminal + in-flight states for a Mode C intent, mirrored on both the server's
@@ -171,7 +249,8 @@ export type OfflineSyncStatus =
   | "SETTLED"
   | "FAILED_INSUFFICIENT"
   | "FAILED_EXPIRED"
-  | "FAILED_SEQUENCE_REGRESSION";
+  | "FAILED_SEQUENCE_REGRESSION"
+  | "FAILED_CONFLICT";
 
 /** Spec §5's mode-selection rule, verbatim: receiver-online wins first (Mode A,
  * canonical/zero-risk), then sender-online (Mode B, bridge), else Mode C. */
