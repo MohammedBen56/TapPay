@@ -752,6 +752,15 @@ pnpm --filter server chaos-experiment  # Ship List Phase 3: injects latency + co
                                   # logs to ops/CHAOS_LOG.md. This is what found incident 0005
                                   # (docs/incidents/) -- an unhandled pg.Pool error crashing the
                                   # whole server on a database restart, since fixed.
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  -v "$PWD/server/bench:/bench" grafana/k6:2.2.0 run /bench/transfers.js \
+  -e BASE_URL=http://host.docker.internal:3000  # Ship List Phase 3 load test --
+                                  # see ops/BENCHMARK.md for results and why a
+                                  # meaningful run needs RATE_LIMIT_GLOBAL_MAX/
+                                  # RATE_LIMIT_LOGIN_MAX relaxed on a throwaway
+                                  # server instance first (the real per-account
+                                  # transfer limit stays at its default on
+                                  # purpose -- write_path tests that it holds).
 
 # Demo login (after `pnpm --filter server seed`):
 #   customer_id: 10000001 .. 10000005   password: Demo#2026 (same for all)

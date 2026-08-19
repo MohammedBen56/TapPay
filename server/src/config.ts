@@ -107,12 +107,23 @@ export const config = {
   appDatabaseUrl: process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgres://tappay:tappay@localhost:5433/tappay",
 
   /** Postgres connection pool bounds (db/kysely.ts's createDb). Deliberately
-   * modest, not maximized: every balance-affecting query serializes on a
+   * modest, not maximized: every balance-affecting WRITE serializes on a
    * row-locked `accounts` row (locking.ts), so a larger pool doesn't raise
-   * throughput -- it just moves the queue from the pool into the lock and
-   * lengthens tail latency instead of shortening it. Sized against
+   * write throughput -- it just moves the queue from the pool into the lock
+   * and lengthens tail latency instead of shortening it. Sized against
    * Postgres's own default max_connections (100), leaving headroom for
-   * other app instances, the sweeper, and manual/migration connections. */
+   * other app instances, the sweeper, and manual/migration connections.
+   *
+   * That reasoning does NOT extend to pure reads (GET /me, /accounts/me/
+   * balance, /accounts/me/transactions) -- they never touch a row lock, so
+   * a bigger pool genuinely would let more of them run concurrently instead
+   * of queueing. ops/BENCHMARK.md's 2026-08-19 load test found exactly this:
+   * p50 stayed ~5ms while p95 rose to ~712ms under 100 concurrent read-only
+   * VUs, the signature of queueing for one of only 10 connections shared
+   * with the (deliberately throttled) write path. Not raised here --
+   * capacity tradeoffs against max_connections are a real decision, not a
+   * bug fix -- but a future capacity call should read that benchmark
+   * first, not just this comment's write-path-only rationale. */
   dbPoolMax: envInt("DB_POOL_MAX", 10),
   dbPoolConnectionTimeoutMs: envInt("DB_POOL_CONNECTION_TIMEOUT_MS", 5_000),
   dbPoolIdleTimeoutMs: envInt("DB_POOL_IDLE_TIMEOUT_MS", 30_000),
