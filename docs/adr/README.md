@@ -20,3 +20,4 @@ old file.
 | [0006](0006-reject-skia-without-device.md) | Reject `react-native-skia` until there's a device to validate the 60fps condition |
 | [0007](0007-pin-tailwind-v3.md) | Pin `tailwindcss` to v3, despite NativeWind's version number suggesting v4 |
 | [0008](0008-jwt-kid-keyed-rotation.md) | `kid`-keyed JWT signing keys, for near-free access-token rotation |
+| [0009](0009-local-tls-caddy-mkcert.md) | Local TLS termination via Caddy + mkcert, not a self-signed cert in Node |

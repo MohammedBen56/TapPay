@@ -158,6 +158,14 @@ tappay/
 │                               #   semgrep/README.md has the full table and the
 │                               #   fixture/nosemgrep placement rules (verified by
 │                               #   direct reproduction, not assumed from docs).
+├── Caddyfile                   # Ship List Phase 4 (ADR-0009). TLS termination in
+│                               #   front of the host-run server -- Mozilla
+│                               #   "Intermediate" profile, a single SNI-agnostic
+│                               #   `:443` site (see the file's own comment for the
+│                               #   real no-SNI-for-IP-literal bug this works
+│                               #   around). caddy/certs/ (gitignored, mkcert,
+│                               #   regenerated per-machine) is where the actual
+│                               #   cert/key/root-CA files live -- see §9.
 └── CLAUDE.md
 ```
 
@@ -707,6 +715,14 @@ docker compose up -d prometheus grafana  # observability (Ship List Phase 2) --
                                       # dashboard from ops/grafana/. Grafana
                                       # login: admin / tappay (dev-only).
 
+# TLS (Ship List Phase 4, ADR-0009) -- first-run bootstrap, and again
+# whenever the dev host's LAN IP changes (see serverUrl.ts's own comment):
+mkdir -p caddy/certs
+mkcert -cert-file caddy/certs/server.pem -key-file caddy/certs/server-key.pem \
+  <your-LAN-IP> localhost 127.0.0.1 host.docker.internal
+cp "$(mkcert -CAROOT)/rootCA.pem" caddy/certs/rootCA.pem   # for curl --cacert / device trust
+docker compose up -d caddy           # TLS on :443 -- fails loudly if certs are missing
+
 # Server -- first-run bootstrap (required once)
 cp .env.example .env
 # .env MUST also set JWT_SECRET (any non-empty string in dev; the server
@@ -796,12 +812,20 @@ docker compose exec telemetry python -m analysis.compute_correlation data/1.json
 Deliberately deferred, not overlooked. Do not "fix" one of these
 opportunistically mid-task.
 
-- **D1 — No TLS.** Unchanged by the v2 pivot. All traffic including
-  `/auth/login`'s password field is plaintext `http://`. Infrastructure-
-  shaped (certs, reverse proxy, Android `networkSecurityConfig`), not
-  attempted this round, and now a HIGHER-priority item than before the pivot
-  — a plaintext password on the wire is worse than a plaintext `tx_uuid`
-  ever was. Top item before any production posture.
+- **D1 — No TLS — CLOSED for local dev/demo (Ship List Phase 4, ADR-0009).**
+  A `caddy` service (`docker-compose.yml`, `Caddyfile`) now terminates TLS on
+  `:443` in front of the host-run server, using a locally-issued mkcert
+  certificate (`caddy/certs/`, gitignored, regenerated per-machine).
+  `mobile/src/config/serverUrl.ts` connects via `https://` by default.
+  Verified end-to-end: a real login through the proxy, a connection without
+  the mkcert root CA correctly rejected, a fresh container with no cert yet
+  failing loudly rather than silently serving plaintext. What's still
+  open: Android doesn't yet trust the mkcert CA (a one-time per-device step,
+  `mobile/DEVICE_TEST_MATRIX.md`, Ship List Phase 6) or pin the cert
+  (Ship List Phase 5) — until then, a real device connection will correctly
+  reject the certificate as untrusted, which is the expected intermediate
+  state, not a bug. A real deployment replaces the mkcert cert with a real
+  CA (ADR-0009's revisit trigger), not this proxy architecture.
 - **D2 — No auth on the two remaining unauthenticated GET routes**
   (`server/src/routes/tx.ts`'s balance-by-id and receipt-by-tx_uuid, kept
   live only for the parked P2P path). Every v2 route is authenticated; this
