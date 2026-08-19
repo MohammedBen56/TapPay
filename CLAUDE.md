@@ -739,6 +739,11 @@ pnpm --filter server test        # requires db up + migrations applied.
                                   # includes the parked suites automatically
                                   # (they call buildApp({proximityRoutes:true})
                                   # per-test, independent of ENABLE_PROXIMITY_ROUTES)
+pnpm --filter server check-invariants  # one-shot ledger invariant check, JSON + exit 1 on violation
+pnpm --filter server restore-drill     # Ship List Phase 3: dumps the real dev db, restores into a
+                                  # throwaway container, runs checkLedgerInvariants() against it,
+                                  # logs a dated row to ops/RESTORE_DRILL.md. Cleans up after itself
+                                  # even on failure.
 
 # Demo login (after `pnpm --filter server seed`):
 #   customer_id: 10000001 .. 10000005   password: Demo#2026 (same for all)
