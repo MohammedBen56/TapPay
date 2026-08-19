@@ -35,7 +35,7 @@
   "devDependencies": {
     "@types/node": "^22.10.7",
     "@types/pg": "^8.11.11",
-    "dotenv-cli": "^8.0.0",
+    "dotenv-cli": "^11.0.0",
     "fast-check": "^4.9.0",
     "node-pg-migrate": "^7.9.1",
     "tsx": "^4.19.2",
