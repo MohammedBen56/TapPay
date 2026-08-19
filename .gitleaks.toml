@@ -1,0 +1,17 @@
+title = "TapPay gitleaks config"
+
+# Extend, don't replace, gitleaks' own default ruleset.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-benign findings, each with a reason -- not a blanket bypass"
+paths = [
+  # Published third-party cryptographic test vectors (Google's Wycheproof
+  # project, CLAUDE.md §5: "Verify COSE/CBOR against published third-party
+  # test vectors before trusting any transaction path"). Real AES-256-GCM
+  # test keys, deliberately public, not a leaked credential -- gitleaks'
+  # generic-api-key rule flags any sufficiently-random hex value under a
+  # "key" JSON field, which is exactly what a test vector looks like.
+  '''packages/shared/src/crypto/__tests__/vectors/wycheproof-aes-256-gcm\.json''',
+]

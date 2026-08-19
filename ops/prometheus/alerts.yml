@@ -1,0 +1,50 @@
+groups:
+  - name: tappay-ledger
+    rules:
+      # No `for:` debounce, deliberately -- an imbalance is never transient.
+      # A single scrape reading nonzero is already a correctness bug, not a
+      # noisy signal to wait out.
+      - alert: TappayLedgerImbalance
+        expr: tappay_ledger_imbalance_minor != 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ledger is out of balance"
+          description: "tappay_ledger_imbalance_minor = {{ $value }} minor units. SUM(amount) over journal must always be exactly 0 (CLAUDE.md §5). Do not wait for this to self-correct -- it will not."
+
+      - alert: TappayLedgerUnbalancedTransactions
+        expr: tappay_ledger_unbalanced_tx_count != 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "One or more individual transactions don't sum to zero"
+          description: "{{ $value }} tx_uuid(s) have journal postings that don't sum to zero. A clean tappay_ledger_imbalance_minor does not rule this out -- two offsetting broken transactions cancel in the global sum."
+
+      # A tripwire that silently stopped running looks identical to one that
+      # always passes, unless staleness itself is monitored. Threshold is 4x
+      # the default 30s tripwire interval (TRIPWIRE_INTERVAL_MS), so a single
+      # slow tick under real load doesn't page; `for: 1m` additionally
+      # requires it to stay stale across several scrapes.
+      - alert: TappayLedgerTripwireStale
+        expr: time() - tappay_ledger_last_check_timestamp_seconds > 120
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ledger invariant tripwire hasn't reported in over 2 minutes"
+          description: "The last successful checkLedgerInvariants() run was {{ $value }}s ago. The tripwire job may have crashed or the process may be down -- check server logs, not just this dashboard."
+
+      # tappay_transfer_total{outcome="tx_uuid_conflict"} is a security
+      # tripwire, not a health metric (metrics.ts's own comment): a normal
+      # idempotent resubmission of the same tx_uuid settles via the COMMITTED
+      # short-circuit and increments outcome="settled", never conflict. Any
+      # nonzero rate here means someone attempted a settlement-slot hijack
+      # (CLAUDE.md §5) -- alert immediately, same urgency as the imbalance
+      # alerts above.
+      - alert: TappayTxUuidConflictDetected
+        expr: increase(tappay_transfer_total{outcome="tx_uuid_conflict"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "tx_uuid conflict detected -- possible settlement-slot hijack attempt"
+          description: "{{ $value }} tx_uuid_conflict outcome(s) in the last 5 minutes. Expected rate is flat zero. Investigate the offending account_id/tx_uuid pair in the server logs before dismissing as benign."

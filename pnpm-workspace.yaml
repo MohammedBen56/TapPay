@@ -5,3 +5,38 @@ packages:
 allowBuilds:
   cbor-extract: true
   esbuild: true
+
+# Every entry here is a denial-of-service-class finding (unbounded loop /
+# OOM / CPU exhaustion -- no injection or auth-bypass potential) buried
+# transitively inside Expo/Metro's own build tooling (expo-router ->
+# @expo/cli -> postcss/js-yaml/etc, and @expo/xcpretty, which exists only
+# for the iOS builds CLAUDE.md already puts out of scope) -- not code that
+# ships in the app bundle or runs at request time. This is what CI's
+# `pnpm audit --prod --audit-level=high` step (.github/workflows/ci.yml)
+# reads to stay green; re-run that command locally after any `expo`/
+# `@expo/*` bump and drop whichever GHSA it no longer reports rather than
+# letting this list grow stale. A real, in-scope finding that same audit
+# caught and got FIXED, not ignored: three kysely SQL-injection advisories
+# (GHSA-wmrf-hv6w-mr66, GHSA-8cpq-38p9-67gx, GHSA-pv5w-4p9q-p3v2), closed
+# by the kysely 0.27.6 -> 0.28.17 bump in the same change that added this
+# list -- proof the gate does its job, not just inherited noise.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mh99-v99m-4gvg # brace-expansion DoS (Expo/Metro build tooling)
+    - GHSA-7p8r-x3mc-p8w7 # fast-uri host confusion (Expo/Metro build tooling)
+    - GHSA-rgw5-rvv9-x895 # brace-expansion DoS, second advisory (ditto)
+    - GHSA-5p4m-2wfm-xmqj # js-yaml quadratic CPU (@expo/xcpretty, iOS-only)
+    - GHSA-w3rx-r6r6-pgpr # image-size ICNS DoS (Expo/Metro build tooling)
+    - GHSA-5p2g-fcmc-qvqq # image-size JXL/HEIF DoS (Expo/Metro build tooling)
+    - GHSA-2v37-7h3g-55p8 # nanoid infinite loop (Expo/Metro build tooling)
+
+# Supply-chain dependency cooldown: pnpm refuses to install a package
+# version published less than this many minutes ago (default is already
+# 1440 as of pnpm v11, but pinned explicitly here so the guarantee is
+# documented and survives a future pnpm downgrade, where the default was
+# 0). Most malicious/compromised releases are pulled from the registry
+# within an hour of being caught -- this doesn't stop a targeted attack,
+# but it closes the "install within minutes of a supply-chain compromise"
+# window that automated dependency bots are otherwise fastest to walk
+# into. Applies to every dependency, direct and transitive.
+minimumReleaseAge: 1440

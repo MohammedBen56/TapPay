@@ -8,6 +8,18 @@ services:
     ports: ["5433:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
 
+  # Backs @fastify/rate-limit's Redis store (Ship List Phase 1) -- an
+  # in-process limiter becomes N times too permissive the moment there's
+  # more than one server instance, since each instance would count
+  # independently. No password/persistence configured: rate-limit counters
+  # are ephemeral, reconstructible state (CLAUDE.md's own "Redis for
+  # ephemeral state only, never durable" rule from the Ship List research)
+  # -- losing them on a restart just means every client's window resets,
+  # never a correctness problem.
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
   pgadmin:
     image: dpage/pgadmin4
     environment:
@@ -24,6 +36,44 @@ services:
       - "./telemetry/app:/app/app"
       - "./telemetry/analysis:/app/analysis"
 
+  # Scrapes the server's GET /metrics (server/src/metrics.ts). The server
+  # itself always runs on the host, not in Docker (see the comment below) --
+  # extra_hosts is what makes host.docker.internal (ops/prometheus/
+  # prometheus.yml's scrape target) resolve under plain Docker Engine on
+  # Linux; Docker Desktop (this project's actual dev environment, CLAUDE.md
+  # §7) already provides it without this, so the entry is a portability
+  # no-op here, not a workaround for something broken locally.
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["9090:9090"]
+    volumes:
+      - "./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      - "./ops/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro"
+      - "promdata:/prometheus"
+
+  grafana:
+    image: grafana/grafana:12.3.1
+    # 3300, not the more obvious 3001/3002/3003 -- same WSL2 host-port
+    # collision this project already hit once for Postgres (.env.example's
+    # 5433-not-5432 comment): those ports silently fail to bind here
+    # (`docker compose ps` shows no host mapping at all, no error) because
+    # something else on this machine already answers on them.
+    ports: ["3300:3000"]
+    environment:
+      # Dev-only default (this project's existing convention -- .env.example's
+      # JWT_SECRET=dev-only-change-me, migration 017's APP_DB_PASSWORD). This
+      # stack isn't exposed beyond the host, so there's no real credential to
+      # protect yet; change before ever exposing Grafana beyond localhost.
+      GF_SECURITY_ADMIN_PASSWORD: tappay
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - "./ops/grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro"
+      - "grafanadata:/var/lib/grafana"
+    depends_on: [prometheus]
+
 # The server always runs on the host (pnpm --filter server dev), not in Docker
 # -- there is no server/Dockerfile. A `server` service under an `integration`
 # profile previously referenced `build: ./server`, which cannot build; removed
@@ -31,3 +81,5 @@ services:
 
 volumes:
   pgdata:
+  promdata:
+  grafanadata:

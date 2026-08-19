@@ -1,0 +1,31 @@
+rules:
+  - id: raw-error-to-response
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      A caught error (or its .message) sent directly in an HTTP response.
+      app.ts's own centralized setErrorHandler exists precisely because this
+      has already happened in practice -- a raw Postgres constraint
+      violation (duplicate device_id, an amount <= 0 CHECK) or a full zod
+      issue dump reaching the client verbatim, instead of the sanitized,
+      typed body every route is supposed to send. Let the error propagate to
+      the centralized handler (throw, or return/await without catching) or
+      construct your own typed error body instead of echoing the caught
+      error/err variable or its .message property.
+    patterns:
+      - pattern-inside: |
+          try {
+            ...
+          } catch ($ERR) {
+            ...
+          }
+      - pattern-either:
+          - pattern: reply.send($ERR)
+          - pattern: reply.status(...).send($ERR)
+          - pattern: reply.code(...).send($ERR)
+          - pattern: |
+              reply.send({..., message: $ERR.message, ...})
+          - pattern: |
+              reply.status(...).send({..., message: $ERR.message, ...})
+          - pattern: |
+              reply.code(...).send({..., message: $ERR.message, ...})

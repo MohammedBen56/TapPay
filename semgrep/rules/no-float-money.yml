@@ -1,0 +1,29 @@
+rules:
+  - id: no-float-money
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Number()/.toFixed()/parseFloat() called on a money-shaped identifier.
+      CLAUDE.md §5: money is bigint minor units everywhere in this stack, no
+      floats, no decimals-as-float -- a Number() round-trip through
+      IEEE-754 can lose precision on values well within a real balance's
+      range, and .toFixed() on a float derived from money produces a
+      display value that can be off by a centime. If this is metrics/
+      observability code where no bigint representation exists at all
+      (Prometheus, for example) and the report is never the source of
+      truth, suppress with a `// nosemgrep: no-float-money` comment
+      explaining why, not a rule change.
+    patterns:
+      - pattern-either:
+          - pattern: Number($M)
+          - pattern: $M.toFixed(...)
+          - pattern: parseFloat($M)
+      - metavariable-regex:
+          metavariable: $M
+          # semgrep's metavariable-regex anchors like Python's re.match (start
+          # of string only, not a substring search and not full-string) --
+          # found by direct reproduction (a case that should have matched
+          # "globalImbalance" silently didn't). Wrapped in .* on both ends so
+          # the keyword can appear anywhere in the identifier, not just as a
+          # literal prefix.
+          regex: (?i).*(amount|balance|minor).*

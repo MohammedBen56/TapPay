@@ -1,0 +1,4 @@
+Contact: mailto:mohabenhayoun56@gmail.com
+Policy: https://github.com/MohammedBen56/TapPay/blob/main/SECURITY.md
+Preferred-Languages: en, fr
+Expires: 2027-08-19T00:00:00.000Z

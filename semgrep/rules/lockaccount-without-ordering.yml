@@ -1,0 +1,22 @@
+rules:
+  - id: lockaccount-without-ordering
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Two direct lockAccount() calls in the same function, not going through
+      lockAccountsInOrder(). Locking two account rows in whatever order the
+      arguments happen to arrive in is exactly the deadlock CLAUDE.md §5 and
+      ADV-06 (100 concurrent bidirectional transfers between the same two
+      accounts) exist to rule out: two concurrent callers locking the same
+      pair in opposite orders can each hold one lock and wait forever on the
+      other. Use db/locking.ts's lockAccountsInOrder(trx, a, b), which sorts
+      before locking, instead of two separate lockAccount() calls.
+    pattern: |
+      lockAccount($TRX, $A);
+      ...
+      lockAccount($TRX, $B);
+    # lockAccountsInOrder's own implementation is the one place two direct
+    # lockAccount() calls in sequence is the whole point, not the bug.
+    paths:
+      exclude:
+        - "**/db/locking.ts"

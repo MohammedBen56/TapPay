@@ -1,0 +1,20 @@
+global:
+  # Matches config.ts's tripwireIntervalMs default (30s) -- scraping much
+  # faster than the tripwire actually updates its gauges would just sample
+  # the same value repeatedly.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: tappay-server
+    # The server always runs on the host (pnpm --filter server dev, CLAUDE.md
+    # §9), never in Docker -- host.docker.internal is how a container reaches
+    # a host-bound port. Works out of the box on Docker Desktop (Mac/Windows/
+    # WSL2, this project's actual dev environment); docker-compose.yml's
+    # extra_hosts entry on this service is what makes the same config also
+    # work under plain Docker Engine on Linux.
+    static_configs:
+      - targets: ["host.docker.internal:3000"]

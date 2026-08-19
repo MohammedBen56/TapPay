@@ -1,0 +1,13 @@
+# Read automatically by `trivy fs` (.github/workflows/ci.yml's "security"
+# job). Every entry here is the same denial-of-service-class, Expo/Metro-
+# build-tooling-only finding already triaged and documented in
+# pnpm-workspace.yaml's auditConfig.ignoreGhsas -- see that file's comment
+# for the full rationale. Kept in sync by hand: re-run the Trivy step
+# locally (see that job's own comment for the docker command) after any
+# `expo`/`@expo/*` bump and drop whichever of these it no longer reports.
+
+CVE-2026-14257      # brace-expansion DoS (Expo/Metro build tooling)
+CVE-2026-69152      # brace-expansion DoS, second advisory (ditto)
+CVE-2026-18446      # fast-uri host confusion (Expo/Metro build tooling)
+GHSA-5p4m-2wfm-xmqj  # js-yaml quadratic CPU (@expo/xcpretty, iOS-only)
+CVE-2026-67213      # nanoid infinite loop (Expo/Metro build tooling)
