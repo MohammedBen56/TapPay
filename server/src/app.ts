@@ -2,6 +2,7 @@ import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, ty
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import { sql } from "kysely";
+import { setAuditLogger } from "./audit/log.js";
 import { registerAuthPlugin } from "./auth/plugin.js";
 import { config } from "./config.js";
 import { db, setDbLogger } from "./db/kysely.js";
@@ -14,6 +15,7 @@ import { registerSyncRoutes } from "./parked/routes/sync.js";
 import { registerTxCoseRoutes } from "./parked/routes/tx-cose.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBeneficiaryRoutes } from "./routes/beneficiaries.js";
+import { registerBillPaymentRoutes } from "./routes/billPayments.js";
 import { registerLookupRoutes } from "./routes/lookup.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { registerTransferRoutes } from "./routes/transfers.js";
@@ -57,6 +59,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   registerAuthPlugin(app);
   setRedisLogger(app.log);
   setDbLogger(app.log);
+  setAuditLogger(app.log);
 
   if (options.rateLimit !== false) {
     // Registered before the routes below, on the same (non-encapsulated) app
@@ -162,6 +165,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     registerTransferRoutes(app);
     registerLookupRoutes(app);
     registerBeneficiaryRoutes(app);
+    registerBillPaymentRoutes(app);
     registerTxRoutes(app);
 
     if (options.proximityRoutes ?? config.enableProximityRoutes) {

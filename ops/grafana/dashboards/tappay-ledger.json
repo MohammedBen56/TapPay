@@ -119,6 +119,43 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "sum"] }, "tooltip": { "mode": "multi" } }
     },
     {
+      "id": 6,
+      "title": "Bill Payment Outcome Breakdown",
+      "description": "POST /bill-payments attempts by outcome -- the same settlement path as Settlement Outcome Breakdown (both go through bankAdapter.transfer()), tracked separately since it's a distinct client-facing route. tx_uuid_conflict is a security tripwire, not a health metric -- its rate should be flat zero; any nonzero rate means an attempted settlement-slot hijack (CLAUDE.md §5), see TappayBillPaymentTxUuidConflictDetected in alerts.yml.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (outcome) (rate(tappay_bill_payment_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "tx_uuid_conflict" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineWidth", "value": 3 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "settled" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "sum"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
       "id": 5,
       "title": "Account Lock Wait (heatmap)",
       "description": "Wall-clock time for lockAccount's SELECT ... FOR UPDATE round trip. A rising p99 here is the earliest signal of lock contention on a hot account, well before it shows up as request latency.",

@@ -3,7 +3,7 @@ import { FlashList } from "@shopify/flash-list";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useAuth } from "../../src/auth/AuthContext";
 import { getBalanceVisible, setBalanceVisible } from "../../src/auth/balanceVisibility";
@@ -68,6 +68,7 @@ export default function HomeScreen(): React.JSX.Element {
             <Text style={styles.balanceAmount}>{visible ? `${balanceDisplay}` : "•••••••"}</Text>
             <Text style={styles.currency}>{visible ? (balanceQuery.data?.currency ?? "MAD") : " "}</Text>
             <GlassButton label="Send money" onPress={() => router.push("/(tabs)/send")} style={styles.sendButton} />
+            <GlassButton label="Pay bills" variant="ghost" onPress={() => router.push("/bills")} style={styles.payBillsButton} />
           </Card>
         </Animated.View>
 
@@ -83,7 +84,11 @@ export default function HomeScreen(): React.JSX.Element {
           contentContainerStyle={styles.listContent}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           ListEmptyComponent={
-            transactionsQuery.isLoading ? null : (
+            transactionsQuery.isLoading ? (
+              <View style={styles.empty}>
+                <ActivityIndicator color={colors.textTertiary} />
+              </View>
+            ) : (
               <View style={styles.empty}>
                 <Ionicons name="receipt-outline" size={28} color={colors.textTertiary} />
                 <Text style={styles.emptyText}>No transactions yet</Text>
@@ -119,6 +124,7 @@ const styles = StyleSheet.create({
     color: colors.textQuiet,
   },
   sendButton: { alignSelf: "stretch", marginTop: 20 },
+  payBillsButton: { alignSelf: "stretch", marginTop: 12 },
   listHeader: { marginTop: 28, marginBottom: 4 },
   sectionLabel: {
     fontFamily: type.sectionLabel.family,

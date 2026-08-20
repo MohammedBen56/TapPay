@@ -35,6 +35,13 @@ export const transferTotal = new Counter({
   registers: [register],
 });
 
+export const billPaymentTotal = new Counter({
+  name: "tappay_bill_payment_total",
+  help: "POST /bill-payments attempts by outcome, mirroring tappay_transfer_total.",
+  labelNames: ["outcome"] as const,
+  registers: [register],
+});
+
 export const accountLockWaitSeconds = new Histogram({
   name: "tappay_account_lock_wait_seconds",
   help: "Wall-clock time for lockAccount's SELECT ... FOR UPDATE round trip. A rising p99 here is the earliest signal of lock contention on a hot account, well before it shows up as request latency.",

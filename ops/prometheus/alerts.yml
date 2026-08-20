@@ -48,3 +48,16 @@ groups:
         annotations:
           summary: "tx_uuid conflict detected -- possible settlement-slot hijack attempt"
           description: "{{ $value }} tx_uuid_conflict outcome(s) in the last 5 minutes. Expected rate is flat zero. Investigate the offending account_id/tx_uuid pair in the server logs before dismissing as benign."
+
+      # Twin of TappayTxUuidConflictDetected above, for POST /bill-payments --
+      # a separate client-facing route settling through the same
+      # bankAdapter.transfer() path (billPayments.ts), so the same attack
+      # class applies and needs its own alert rather than being silently
+      # uncovered by the transfers-only rule above.
+      - alert: TappayBillPaymentTxUuidConflictDetected
+        expr: increase(tappay_bill_payment_total{outcome="tx_uuid_conflict"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "tx_uuid conflict detected on a bill payment -- possible settlement-slot hijack attempt"
+          description: "{{ $value }} tx_uuid_conflict outcome(s) on POST /bill-payments in the last 5 minutes. Expected rate is flat zero. Investigate the offending account_id/tx_uuid pair in the server logs before dismissing as benign."

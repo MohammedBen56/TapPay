@@ -1,6 +1,8 @@
 import type { TransactionSummary } from "@tappay/shared";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { BILLER_CATEGORY_ICON } from "../design/billerCategory";
 import { colors, type } from "../design/tokens";
 import { formatMAD } from "../design/format";
 
@@ -15,7 +17,11 @@ export function TransactionRow({ tx }: { tx: TransactionSummary }): React.JSX.El
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
       <View style={[styles.avatar, isCredit ? styles.avatarCredit : styles.avatarDebit]}>
-        <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+        {tx.is_biller && tx.biller_category ? (
+          <Ionicons name={BILLER_CATEGORY_ICON[tx.biller_category]} size={18} color={colors.bone} />
+        ) : (
+          <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+        )}
       </View>
       <View style={styles.middle}>
         <Text style={styles.name} numberOfLines={1}>
