@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import { TRIPWIRE_ADVISORY_LOCK_KEY, withAdvisoryLock } from "./db/advisoryLock.js";
 import type { Database } from "./db/kysely.js";
 import { checkLedgerInvariants } from "./ledger/invariants.js";
 import { ledgerImbalanceMinor, ledgerLastCheckTimestampSeconds, ledgerUnbalancedTxCount } from "./metrics.js";
@@ -19,7 +20,12 @@ export function startTripwire(db: Kysely<Database>, intervalMs: number, logger: 
   let inFlight: Promise<void> | null = null;
 
   const tick = async (): Promise<void> => {
-    const report = await checkLedgerInvariants(db);
+    // Ship List v2 Phase 6: only the replica that wins the advisory lock
+    // actually checks this tick -- see db/advisoryLock.ts's own doc comment.
+    // A skipped tick (null) is not itself a problem: another replica's tick
+    // on the same interval already updates the shared gauges below.
+    const report = await withAdvisoryLock(db, TRIPWIRE_ADVISORY_LOCK_KEY, checkLedgerInvariants);
+    if (!report) return;
     // Number(), not the bigint CLAUDE.md §5 requires everywhere else: this
     // is the metrics/observability layer, which has no bigint representation
     // at all (Prometheus gauges are IEEE-754 doubles) and is never the

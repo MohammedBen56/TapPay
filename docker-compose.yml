@@ -125,10 +125,34 @@ services:
       db:
         condition: service_healthy
 
-# The server always runs on the host (pnpm --filter server dev), not in Docker
-# -- there is no server/Dockerfile. A `server` service under an `integration`
-# profile previously referenced `build: ./server`, which cannot build; removed
-# rather than left as a declared-but-broken profile. See CLAUDE.md §9.
+  # Ship List v2 Phase 6 -- the containerized deploy story
+  # (server/Dockerfile's own header comment has the tsx-not-tsc reasoning).
+  # Gated behind the `containerized` profile so the default `docker compose
+  # up -d db` dev workflow (server run on the host via `pnpm --filter
+  # server dev`, CLAUDE.md §9) is completely unaffected -- bring this up
+  # explicitly with `docker compose --profile containerized up -d server`.
+  # Talks to `db`/`redis` by their in-network service names/ports, not
+  # localhost:5433/APP_DATABASE_URL's host-port mapping -- those only exist
+  # for a host process reaching into the compose network from outside it.
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    profiles: [containerized]
+    environment:
+      DATABASE_URL: postgres://tappay:tappay@db:5432/tappay
+      APP_DATABASE_URL: postgres://tappay_app:tappay_app_dev_password@db:5432/tappay
+      REDIS_URL: redis://redis:6379
+      SERVER_PORT: "3000"
+      # Dev-only placeholder, same convention as APP_DB_PASSWORD above --
+      # override with a real secret for anything beyond local demo use.
+      JWT_SECRET: dev-only-change-me-min-32-chars-long
+    ports: ["3000:3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
 volumes:
   pgdata:

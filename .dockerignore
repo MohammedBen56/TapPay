@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+mobile
+!mobile/package.json
+telemetry
+docs
+ops
+caddy
+*.md
+.env
+.env.*
+!.env.example

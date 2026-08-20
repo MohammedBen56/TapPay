@@ -1,4 +1,5 @@
 import type { Kysely } from "kysely";
+import { SWEEPER_ADVISORY_LOCK_KEY, withAdvisoryLock } from "./db/advisoryLock.js";
 import type { Database } from "./db/kysely.js";
 
 /** Releases stale HELD reservations. Idempotent (re-running with nothing expired
@@ -28,10 +29,12 @@ export interface Sweeper {
 }
 
 export function startSweeper(db: Kysely<Database>, intervalMs: number, logger: SweeperLogger): Sweeper {
-  let inFlight: Promise<number> | null = null;
+  let inFlight: Promise<number | null> | null = null;
 
   const timer = setInterval(() => {
-    inFlight = sweepExpiredReservations(db)
+    // Ship List v2 Phase 6: only the replica that wins the advisory lock
+    // actually sweeps this tick -- see db/advisoryLock.ts's own doc comment.
+    inFlight = withAdvisoryLock(db, SWEEPER_ADVISORY_LOCK_KEY, sweepExpiredReservations)
       .catch((err: unknown) => {
         logger.error(err, "reservation sweeper tick failed");
         return 0;
