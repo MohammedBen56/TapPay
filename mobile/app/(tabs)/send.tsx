@@ -4,15 +4,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import * as LocalAuthentication from "expo-local-authentication";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BackHandler, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInRight, FadeOutLeft } from "react-native-reanimated";
 import { api } from "../../src/api/endpoints";
 import { ApiError } from "../../src/api/client";
+import { meQueryOptions } from "../../src/api/queries";
+import { useBiometricConfirm } from "../../src/auth/useBiometricConfirm";
 import { Card } from "../../src/components/Card";
 import { GlassButton } from "../../src/components/GlassButton";
+import { ReviewRow } from "../../src/components/ReviewRow";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
 import { SegmentedControl } from "../../src/components/SegmentedControl";
 import { TextField } from "../../src/components/TextField";
@@ -40,7 +42,8 @@ const STEP_TITLES: Record<Exclude<Step, "success">, string> = {
 
 export default function SendScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const confirmBiometric = useBiometricConfirm();
+  const { data: me } = useQuery(meQueryOptions);
   const [step, setStep] = useState<Step>("recipient");
   const [method, setMethod] = useState<RecipientMethod>("contacts");
   const [recipient, setRecipient] = useState<Recipient | null>(null);
@@ -161,14 +164,7 @@ export default function SendScreen(): React.JSX.Element {
     if (!recipient) return;
     setSubmitError(null);
 
-    const [hasHardware, isEnrolled] = await Promise.all([
-      LocalAuthentication.hasHardwareAsync(),
-      LocalAuthentication.isEnrolledAsync(),
-    ]);
-    if (hasHardware && isEnrolled) {
-      const auth = await LocalAuthentication.authenticateAsync({ promptMessage: "Confirm to send money" });
-      if (!auth.success) return;
-    }
+    if (!(await confirmBiometric("Confirm to send money"))) return;
 
     setSubmitting(true);
     try {
@@ -336,15 +332,6 @@ export default function SendScreen(): React.JSX.Element {
         </ScrollView>
       </KeyboardAvoidingView>
     </ScreenBackground>
-  );
-}
-
-function ReviewRow({ label, value, emphasize }: { label: string; value: string; emphasize?: boolean }): React.JSX.Element {
-  return (
-    <View style={styles.reviewRow}>
-      <Text style={styles.reviewLabel}>{label}</Text>
-      <Text style={[styles.reviewValue, emphasize && styles.reviewValueEmphasized]}>{value}</Text>
-    </View>
   );
 }
 
@@ -640,10 +627,6 @@ const styles = StyleSheet.create({
   amountField: { fontFamily: type.hero.family, fontSize: 36, textAlign: "center", height: 72 },
   amountPreview: { fontFamily: type.hero.family, fontSize: 36, color: colors.bone, textAlign: "center" },
   reviewCard: { gap: 16 },
-  reviewRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  reviewLabel: { fontFamily: type.caption.family, fontSize: 13, color: colors.textSecondary },
-  reviewValue: { fontFamily: type.bodyStrong.family, fontSize: 15, color: colors.bone, maxWidth: "60%", textAlign: "right" },
-  reviewValueEmphasized: { fontFamily: type.amount.family, fontSize: 20, color: colors.bone },
   successWrap: { alignItems: "center", gap: 8, width: "100%" },
   successIcon: {
     width: 72,

@@ -1,12 +1,23 @@
 services:
+  # Pinned to the same digest .github/workflows/ci.yml already verified and
+  # pins, so local dev can't silently drift to a different point-release
+  # than CI. Healthcheck mirrors CI's Postgres service block exactly --
+  # without it, pgadmin/toxiproxy's `depends_on: [db]` below only waited for
+  # the container to START, not for Postgres to actually accept
+  # connections, a real flaky-startup risk this fixes.
   db:
-    image: postgres:16
+    image: postgres:16@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5
     environment:
       POSTGRES_DB: tappay
       POSTGRES_USER: tappay
       POSTGRES_PASSWORD: tappay
     ports: ["5433:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tappay -d tappay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Backs @fastify/rate-limit's Redis store (Ship List Phase 1) -- an
   # in-process limiter becomes N times too permissive the moment there's
@@ -17,7 +28,7 @@ services:
   # -- losing them on a restart just means every client's window resets,
   # never a correctness problem.
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     ports: ["6379:6379"]
 
   pgadmin:
@@ -26,7 +37,9 @@ services:
       PGADMIN_DEFAULT_EMAIL: dev@tappay.local
       PGADMIN_DEFAULT_PASSWORD: tappay
     ports: ["5050:80"]
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
 
   telemetry:
     build: ./telemetry
@@ -108,7 +121,9 @@ services:
     ports:
       - "8474:8474" # toxiproxy's own control REST API
       - "15433:15433" # the proxied postgres connection point
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
 
 # The server always runs on the host (pnpm --filter server dev), not in Docker
 # -- there is no server/Dockerfile. A `server` service under an `integration`

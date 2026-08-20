@@ -111,13 +111,80 @@ jobs:
       - name: Test server
         run: pnpm --filter server test
 
-  security:
-    name: Secret scan, dependency audit, filesystem scan, workflow audit
+  # Split from a single "security" job: gitleaks/Trivy/zizmor need no
+  # pnpm/Node at all, so running them in their own job (no
+  # pnpm/action-setup or actions/setup-node steps) is both faster in
+  # wall-clock time AND skips real setup work, not just a parallelization
+  # trade-off against security-deps below.
+  security-static:
+    name: Secret scan, filesystem scan, workflow audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # gitleaks scans full history, not just the diff
+          persist-credentials: false
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No GITLEAKS_LICENSE: only required for GitHub Organization
+          # accounts, not personal accounts (this repo's owner).
+
+      # Runs BEFORE `pnpm install` in security-deps below, deliberately --
+      # trivy's pnpm scanner reads pnpm-lock.yaml directly and needs no
+      # materialized node_modules, and scanning `.` with node_modules
+      # already present pulls in every dependency's own vendored
+      # fixtures/example apps (found by direct reproduction: a stray
+      # Gemfile.lock inside react-native-qrcode-svg's own Example/
+      # directory surfaced unrelated Ruby CVEs). Exclusions live in
+      # .trivyignore (auto-read), documented there and kept in sync with
+      # pnpm-workspace.yaml's auditConfig.ignoreGhsas -- same findings, two
+      # tools. Reproduce locally with:
+      #   docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:latest fs \
+      #     --scanners vuln,secret,misconfig --severity CRITICAL,HIGH \
+      #     --ignore-unfixed --exit-code 1 \
+      #     --skip-dirs node_modules,mobile/android/.gradle,mobile/android/app/build .
+      #
+      # This action already caches its own vulnerability DB between runs
+      # (its `cache` input defaults to true, restoring a date-keyed
+      # actions/cache entry internally) -- no extra caching step needed
+      # here; verified against the action's own source, not assumed.
+      - name: Filesystem vulnerability + misconfig scan (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-dirs: node_modules,mobile/android/.gradle,mobile/android/app/build
+
+      # Statically audits THIS repo's own workflow files (this file
+      # included) for injection via untrusted `${{ }}` expansion,
+      # overly-broad permissions, unpinned actions, and similar --
+      # zizmorcore/zizmor-action's own README recommends
+      # `persist-credentials: false` on checkout, already applied above.
+      - name: Audit GitHub Actions workflows (zizmor)
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          # This repo doesn't carry a GitHub Advanced Security subscription
+          # (private repo, personal account) -- SARIF-upload mode requires
+          # it. Without this, findings still fail the job; they just don't
+          # also appear in a Security tab that isn't available here.
+          advanced-security: false
+
+  # The other half of the split above -- only these two steps actually need
+  # installed dependencies (pnpm audit reads the resolved tree; semgrep
+  # itself doesn't, but is kept here rather than in security-static since
+  # it's dependency-scanning in spirit, not a static/filesystem check).
+  security-deps:
+    name: Dependency audit, custom Semgrep rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
           persist-credentials: false
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -128,37 +195,6 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-
-      - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # No GITLEAKS_LICENSE: only required for GitHub Organization
-          # accounts, not personal accounts (this repo's owner).
-
-      # Runs BEFORE `pnpm install`, deliberately -- trivy's pnpm scanner
-      # reads pnpm-lock.yaml directly and needs no materialized
-      # node_modules, and scanning `.` with node_modules already present
-      # pulls in every dependency's own vendored fixtures/example apps
-      # (found by direct reproduction: a stray Gemfile.lock inside
-      # react-native-qrcode-svg's own Example/ directory surfaced unrelated
-      # Ruby CVEs). Exclusions live in .trivyignore (auto-read), documented
-      # there and kept in sync with pnpm-workspace.yaml's
-      # auditConfig.ignoreGhsas -- same findings, two tools. Reproduce
-      # locally with:
-      #   docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:latest fs \
-      #     --scanners vuln,secret,misconfig --severity CRITICAL,HIGH \
-      #     --ignore-unfixed --exit-code 1 \
-      #     --skip-dirs node_modules,mobile/android/.gradle,mobile/android/app/build .
-      - name: Filesystem vulnerability + misconfig scan (Trivy)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-          skip-dirs: node_modules,mobile/android/.gradle,mobile/android/app/build
 
       # Exclusions live in pnpm-workspace.yaml's auditConfig.ignoreGhsas, not
       # here -- pnpm reads that automatically, and it's where each entry's
@@ -185,17 +221,3 @@ jobs:
 
       - name: Custom Semgrep rules (server + shared + mobile)
         run: semgrep --config semgrep/rules server/src packages/shared/src mobile/src mobile/app --exclude '**/__tests__/**' --error
-
-      # Statically audits THIS repo's own workflow files (this file
-      # included) for injection via untrusted `${{ }}` expansion,
-      # overly-broad permissions, unpinned actions, and similar --
-      # zizmorcore/zizmor-action's own README recommends
-      # `persist-credentials: false` on checkout, already applied above.
-      - name: Audit GitHub Actions workflows (zizmor)
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
-        with:
-          # This repo doesn't carry a GitHub Advanced Security subscription
-          # (private repo, personal account) -- SARIF-upload mode requires
-          # it. Without this, findings still fail the job; they just don't
-          # also appear in a Security tab that isn't available here.
-          advanced-security: false
