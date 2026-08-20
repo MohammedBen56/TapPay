@@ -26,6 +26,7 @@ export type ErrorCode =
   | "InsufficientFunds"
   | "DuplicateBeneficiary"
   | "DuplicateAccount"
+  | "DuplicateDispute"
   | "NotFound"
   // Ship List v2 Wave 2 Phase 4:
   | "StepUpRequired"
@@ -472,4 +473,46 @@ export interface DetectedSubscription {
 
 export interface SubscriptionsResponse {
   subscriptions: DetectedSubscription[];
+}
+
+// ---- Support requests + disputes (Ship List v2 Wave 2 Phase 6) ----
+// Both a real, stored request -- no admin reply flow yet (single-owner
+// review), see server/src/routes/{support,disputes}.ts.
+
+export type SupportRequestStatus = "open" | "resolved";
+
+export interface SupportRequest {
+  id: string;
+  subject: string;
+  message: string;
+  status: SupportRequestStatus;
+  created_at: string;
+}
+
+export interface SupportRequestsResponse {
+  support_requests: SupportRequest[];
+}
+
+export interface CreateSupportRequestRequest {
+  subject: string;
+  message: string;
+}
+
+export type DisputeStatus = "open" | "resolved";
+
+export interface Dispute {
+  id: string;
+  tx_uuid: string;
+  reason: string;
+  status: DisputeStatus;
+  created_at: string;
+}
+
+export interface DisputesResponse {
+  disputes: Dispute[];
+}
+
+export interface CreateDisputeRequest {
+  tx_uuid: string;
+  reason: string;
 }

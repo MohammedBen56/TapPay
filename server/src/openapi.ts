@@ -41,7 +41,9 @@ import { accountIdQuerySchema, statementQuerySchema, transactionsQuerySchema, up
 import { transferBodySchema } from "./routes/transfers.js";
 import { createBodySchema as createBeneficiaryBodySchema, updateBodySchema as updateBeneficiaryBodySchema } from "./routes/beneficiaries.js";
 import { billPaymentsQuerySchema, categoryQuerySchema, payBillBodySchema } from "./routes/billPayments.js";
+import { createDisputeBodySchema } from "./routes/disputes.js";
 import { createGoalBodySchema, fundGoalBodySchema } from "./routes/goals.js";
+import { createSupportRequestBodySchema } from "./routes/support.js";
 
 function bodyFrom(schema: ZodTypeAny): OpenAPIV3.RequestBodyObject {
   return {
@@ -395,6 +397,44 @@ export function buildOpenApiDocument(): OpenAPIV3.Document {
           security: bearerAuth,
           parameters: queryParamsFrom(accountIdQuerySchema),
           responses: { "200": { description: "SubscriptionsResponse" } },
+        },
+      },
+      "/support-requests": {
+        get: {
+          operationId: "listSupportRequests",
+          summary: "List the caller's own support requests",
+          tags: ["support"],
+          security: bearerAuth,
+          responses: { "200": { description: "SupportRequestsResponse" } },
+        },
+        post: {
+          operationId: "createSupportRequest",
+          summary: "File a support request",
+          tags: ["support"],
+          security: bearerAuth,
+          requestBody: bodyFrom(createSupportRequestBodySchema),
+          responses: { "201": { description: "SupportRequest" } },
+        },
+      },
+      "/disputes": {
+        get: {
+          operationId: "listDisputes",
+          summary: "List the caller's own disputes",
+          tags: ["disputes"],
+          security: bearerAuth,
+          responses: { "200": { description: "DisputesResponse" } },
+        },
+        post: {
+          operationId: "createDispute",
+          summary: "Flag a transaction for review -- never touches money movement",
+          tags: ["disputes"],
+          security: bearerAuth,
+          requestBody: bodyFrom(createDisputeBodySchema),
+          responses: {
+            "201": { description: "Dispute" },
+            "404": { description: "no transaction with this tx_uuid for the caller's own account" },
+            "409": { description: "DuplicateDispute -- already flagged" },
+          },
         },
       },
     },

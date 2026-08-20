@@ -219,6 +219,16 @@ export default function SettingsScreen(): React.JSX.Element {
           />
         </Card>
 
+        <Text style={styles.sectionLabel}>Support</Text>
+        <Card style={styles.card}>
+          <SettingsRow
+            icon="help-circle-outline"
+            label="Help"
+            sublabel="FAQ and contact us"
+            onPress={() => router.push("/help")}
+          />
+        </Card>
+
         <Text style={styles.sectionLabel}>About</Text>
         <Card style={styles.card}>
           <Text style={styles.disclosure}>

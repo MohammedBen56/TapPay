@@ -10,10 +10,14 @@ import type {
   ChangePasswordRequest,
   CreateBeneficiaryRequest,
   CreateBeneficiaryResponse,
+  CreateDisputeRequest,
   CreateGoalRequest,
+  CreateSupportRequestRequest,
   CreateTransferRequest,
   CreateTransferResponse,
   DataExportResponse,
+  Dispute,
+  DisputesResponse,
   FundGoalRequest,
   Goal,
   GoalsResponse,
@@ -35,6 +39,8 @@ import type {
   StepUpRequest,
   StepUpResponse,
   SubscriptionsResponse,
+  SupportRequest,
+  SupportRequestsResponse,
   TransactionsQuery,
   TransactionsResponse,
   TransferDetailResponse,
@@ -122,4 +128,10 @@ export const api = {
   deleteGoal: (id: string) => apiRequest<void>(`/goals/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   subscriptions: () => apiRequest<SubscriptionsResponse>("/subscriptions"),
+
+  supportRequests: () => apiRequest<SupportRequestsResponse>("/support-requests"),
+  createSupportRequest: (body: CreateSupportRequestRequest) => apiRequest<SupportRequest>("/support-requests", { method: "POST", body }),
+
+  disputes: () => apiRequest<DisputesResponse>("/disputes"),
+  createDispute: (body: CreateDisputeRequest) => apiRequest<Dispute>("/disputes", { method: "POST", body }),
 };

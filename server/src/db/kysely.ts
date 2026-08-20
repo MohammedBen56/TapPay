@@ -254,6 +254,32 @@ export interface GoalsTable {
   created_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 6 (027_support_requests.cjs): the in-app
+ * support/FAQ contact form's stored half -- see server/src/routes/
+ * support.ts. */
+export type SupportRequestStatus = "open" | "resolved";
+export interface SupportRequestsTable {
+  id: Generated<string>;
+  user_id: string;
+  subject: string;
+  message: string;
+  status: Generated<SupportRequestStatus>;
+  created_at: Generated<Date>;
+}
+
+/** Ship List v2 Wave 2 Phase 6 (028_disputes.cjs): "flag this transaction"
+ * off the receipt screen -- see server/src/routes/disputes.ts. Never
+ * touches money movement; a review request, not a reversal mechanism. */
+export type DisputeStatus = "open" | "resolved";
+export interface DisputesTable {
+  id: Generated<string>;
+  user_id: string;
+  tx_uuid: string;
+  reason: string;
+  status: Generated<DisputeStatus>;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   users: UsersTable;
   accounts: AccountsTable;
@@ -271,6 +297,8 @@ export interface Database {
   settlement_events: SettlementEventsTable;
   known_devices: KnownDevicesTable;
   goals: GoalsTable;
+  support_requests: SupportRequestsTable;
+  disputes: DisputesTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

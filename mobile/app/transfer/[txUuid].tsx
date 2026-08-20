@@ -9,9 +9,11 @@ import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
 import { api } from "../../src/api/endpoints";
+import { ApiError } from "../../src/api/client";
 import { Card } from "../../src/components/Card";
 import { GlassButton } from "../../src/components/GlassButton";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
+import { TextField } from "../../src/components/TextField";
 import { colors, radius, type } from "../../src/design/tokens";
 import { formatDateTime, formatMAD, formatRibGrouped } from "../../src/design/format";
 
@@ -24,6 +26,31 @@ export default function TransferDetailScreen(): React.JSX.Element {
   });
   const viewShotRef = useRef<ViewShotRef>(null);
   const [busy, setBusy] = useState<"image" | "pdf" | null>(null);
+
+  // Ship List v2 Wave 2 Phase 6: "flag this transaction" -- never touches
+  // money movement, just records a review request.
+  const [flagging, setFlagging] = useState(false);
+  const [flagReason, setFlagReason] = useState("");
+  const [flagBusy, setFlagBusy] = useState(false);
+  const [flagError, setFlagError] = useState<string | null>(null);
+  const [flagged, setFlagged] = useState(false);
+
+  const handleFlag = async (): Promise<void> => {
+    if (!txUuid) return;
+    setFlagError(null);
+    setFlagBusy(true);
+    try {
+      await api.createDispute({ tx_uuid: txUuid, reason: flagReason.trim() });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setFlagging(false);
+      setFlagged(true);
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setFlagError(err instanceof ApiError ? err.message : "Couldn't flag this transaction -- try again.");
+    } finally {
+      setFlagBusy(false);
+    }
+  };
 
   const handleShareImage = async (): Promise<void> => {
     if (!viewShotRef.current?.capture) return;
@@ -99,6 +126,33 @@ export default function TransferDetailScreen(): React.JSX.Element {
         <View style={styles.actions}>
           <GlassButton label="Share as image" onPress={() => void handleShareImage()} loading={busy === "image"} />
           <GlassButton label="Save as PDF" variant="ghost" onPress={() => void handleSharePdf()} loading={busy === "pdf"} />
+          {flagged ? (
+            <Text style={styles.flaggedText}>Flagged for review.</Text>
+          ) : flagging ? (
+            <Card style={styles.flagCard}>
+              <TextField
+                label="What's wrong with this transaction?"
+                value={flagReason}
+                onChangeText={setFlagReason}
+                placeholder="e.g. I don't recognize this"
+                autoFocus
+              />
+              {flagError ? <Text style={styles.errorText}>{flagError}</Text> : null}
+              <View style={styles.flagActions}>
+                <GlassButton label="Cancel" variant="ghost" onPress={() => setFlagging(false)} style={styles.flagButton} />
+                <GlassButton
+                  label="Flag"
+                  variant="danger"
+                  onPress={() => void handleFlag()}
+                  loading={flagBusy}
+                  disabled={!flagReason.trim()}
+                  style={styles.flagButton}
+                />
+              </View>
+            </Card>
+          ) : (
+            <GlassButton label="Flag this transaction" variant="ghost" onPress={() => setFlagging(true)} />
+          )}
           <GlassButton label="Done" variant="ghost" onPress={() => router.back()} />
         </View>
       </ScrollView>
@@ -168,4 +222,9 @@ const styles = StyleSheet.create({
   detailValue: { fontFamily: type.bodyStrong.family, fontSize: 14, color: colors.bone, maxWidth: "60%", textAlign: "right" },
   mono: { fontFamily: type.caption.family, fontSize: 11 },
   actions: { gap: 12 },
+  flagCard: { gap: 12 },
+  flagActions: { flexDirection: "row", gap: 12 },
+  flagButton: { flex: 1 },
+  flaggedText: { fontFamily: type.caption.family, fontSize: 13, color: colors.textSecondary, textAlign: "center" },
+  errorText: { fontFamily: type.caption.family, fontSize: 13, color: colors.danger },
 });
