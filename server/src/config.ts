@@ -177,6 +177,18 @@ export const config = {
    * not adding load on a hot path. */
   tripwireIntervalMs: envInt("TRIPWIRE_INTERVAL_MS", 30_000),
 
+  /** Ship List v2 Phase 8: mock savings-account interest job (interest.ts)
+   * tick interval, ms. Defaults to a real operational cadence (daily), same
+   * as a real bank's overnight accrual job -- override for a live demo
+   * (e.g. `INTEREST_INTERVAL_MS=10000`) rather than defaulting to something
+   * demo-fast that would misrepresent real accrual timing if screenshotted. */
+  interestIntervalMs: envInt("INTEREST_INTERVAL_MS", 24 * 60 * 60 * 1000),
+
+  /** Interest credited per tick, in basis points of the savings balance
+   * (1 = 0.01%). Config-driven, not hardcoded -- CLAUDE.md §8's "config
+   * over constants for every tunable" rule. */
+  interestRateBp: envInt("INTEREST_RATE_BP", 1),
+
   /** /tx/submit's `ts` sanity window (Step 8) -- a coarse bound layered behind
    * tx_uuid idempotency, the actual replay defense. Minutes, not seconds. */
   txFreshnessWindowMs: envInt("TX_FRESHNESS_WINDOW_MS", 5 * 60_000),

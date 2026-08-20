@@ -26,10 +26,8 @@ export async function createEnrolledDevice(
   const userId = randomUUID();
 
   await db.transaction().execute(async (trx) => {
-    await trx
-      .insertInto("accounts")
-      .values({ account_id: accountId, user_id: userId, email: `test-${randomUUID()}@tappay.local`, currency: "MAD" })
-      .execute();
+    await trx.insertInto("users").values({ user_id: userId, email: `test-${randomUUID()}@tappay.local` }).execute();
+    await trx.insertInto("accounts").values({ account_id: accountId, user_id: userId, currency: "MAD" }).execute();
     await trx
       .insertInto("devices")
       .values({

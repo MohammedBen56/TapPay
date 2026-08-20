@@ -90,14 +90,15 @@ async function seedCustomer(customer: DemoCustomer): Promise<SeededAccount | nul
   const passwordHash = await hashPassword(DEMO_PASSWORD);
 
   await db.transaction().execute(async (trx) => {
+    // Ship List v2 Phase 8: identity (email/display_name) lives on `users`
+    // now, created before the accounts row that references it.
+    await trx.insertInto("users").values({ user_id: userId, email: customer.email, display_name: customer.displayName }).execute();
     await trx
       .insertInto("accounts")
       .values({
         account_id: accountId,
         user_id: userId,
-        email: customer.email,
         currency: "MAD",
-        display_name: customer.displayName,
         rib: customer.rib,
       })
       .execute();
@@ -180,9 +181,9 @@ async function seedBeneficiary(ownerUserId: string, displayName: string, rib: st
  * Idempotent, safe to run every time. */
 async function ensureMintAccountDisplayName(): Promise<void> {
   await db
-    .updateTable("accounts")
+    .updateTable("users")
     .set({ display_name: "TapPay" })
-    .where("account_id", "=", MINT_ACCOUNT_ID)
+    .where("user_id", "=", MINT_ACCOUNT_ID)
     .where("display_name", "is", null)
     .execute();
 }

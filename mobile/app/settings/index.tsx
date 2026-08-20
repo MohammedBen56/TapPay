@@ -1,10 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { useState } from "react";
 import * as LocalAuthentication from "expo-local-authentication";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { api } from "../../src/api/endpoints";
+import { ApiError } from "../../src/api/client";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Card } from "../../src/components/Card";
+import { GlassButton } from "../../src/components/GlassButton";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
 import { colors, type } from "../../src/design/tokens";
 
@@ -41,6 +45,25 @@ export default function SettingsScreen(): React.JSX.Element {
   const { biometricHardwareAvailable, biometricEnabled, enableBiometric, disableBiometric } = useAuth();
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [biometricError, setBiometricError] = useState<string | null>(null);
+
+  const queryClient = useQueryClient();
+  const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const hasSavings = accountsQuery.data?.accounts.some((a) => a.account_type === "savings") ?? false;
+  const [openingSavings, setOpeningSavings] = useState(false);
+  const [openSavingsError, setOpenSavingsError] = useState<string | null>(null);
+
+  const handleOpenSavings = async (): Promise<void> => {
+    setOpenSavingsError(null);
+    setOpeningSavings(true);
+    try {
+      await api.openAccount({ account_type: "savings" });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    } catch (err) {
+      setOpenSavingsError(err instanceof ApiError ? err.message : "Couldn't open a savings account -- try again.");
+    } finally {
+      setOpeningSavings(false);
+    }
+  };
 
   const handleToggleBiometric = async (next: boolean): Promise<void> => {
     setBiometricError(null);
@@ -109,6 +132,26 @@ export default function SettingsScreen(): React.JSX.Element {
           />
         </Card>
 
+        {!hasSavings && (
+          <>
+            <Text style={styles.sectionLabel}>Accounts</Text>
+            <Card style={styles.card}>
+              <Text style={styles.disclosure}>
+                Open a savings account to keep money separate and earn interest on it, with instant transfers to and
+                from checking.
+              </Text>
+              {openSavingsError ? <Text style={styles.errorText}>{openSavingsError}</Text> : null}
+              <GlassButton
+                label="Open savings account"
+                variant="ghost"
+                onPress={() => void handleOpenSavings()}
+                loading={openingSavings}
+                style={styles.openSavingsButton}
+              />
+            </Card>
+          </>
+        )}
+
         <Text style={styles.sectionLabel}>Documents</Text>
         <Card style={styles.card}>
           <SettingsRow
@@ -158,4 +201,5 @@ const styles = StyleSheet.create({
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline, marginVertical: 4, marginLeft: 46 },
   errorText: { fontFamily: type.caption.family, fontSize: 13, color: colors.danger, paddingHorizontal: 8, paddingBottom: 8 },
   disclosure: { fontFamily: type.caption.family, fontSize: 13, color: colors.textTertiary, lineHeight: 19, padding: 8 },
+  openSavingsButton: { margin: 8, marginTop: 4 },
 });

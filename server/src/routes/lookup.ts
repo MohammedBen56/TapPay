@@ -17,7 +17,12 @@ export function registerLookupRoutes(app: FastifyInstance): void {
       if (!isValidRib(rib)) {
         return reply.status(404).send({ error: "NotFound", message: "no account with this RIB" });
       }
-      const account = await db.selectFrom("accounts").select(["display_name"]).where("rib", "=", rib).executeTakeFirst();
+      const account = await db
+        .selectFrom("accounts")
+        .innerJoin("users", "users.user_id", "accounts.user_id")
+        .select(["users.display_name as display_name"])
+        .where("rib", "=", rib)
+        .executeTakeFirst();
       if (!account || !account.display_name) {
         return reply.status(404).send({ error: "NotFound", message: "no account with this RIB" });
       }

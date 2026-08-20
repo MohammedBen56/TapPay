@@ -13,6 +13,7 @@ import { redis, setRedisLogger } from "./redis.js";
 import { registerDeviceRoutes } from "./parked/routes/devices.js";
 import { registerSyncRoutes } from "./parked/routes/sync.js";
 import { registerTxCoseRoutes } from "./parked/routes/tx-cose.js";
+import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBeneficiaryRoutes } from "./routes/beneficiaries.js";
 import { registerBillPaymentRoutes } from "./routes/billPayments.js";
@@ -161,6 +162,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     });
 
     registerAuthRoutes(app);
+    registerAccountRoutes(app);
     registerMeRoutes(app);
     registerTransferRoutes(app);
     registerLookupRoutes(app);

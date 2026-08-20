@@ -38,14 +38,13 @@ export async function createTestCustomer(
   const passwordHash = await hashPassword(password);
 
   await db.transaction().execute(async (trx) => {
+    await trx.insertInto("users").values({ user_id: userId, email: `${customerId}@tappay.local`, display_name: displayName }).execute();
     await trx
       .insertInto("accounts")
       .values({
         account_id: accountId,
         user_id: userId,
-        email: `${customerId}@tappay.local`,
         currency: "MAD",
-        display_name: displayName,
         rib,
       })
       .execute();

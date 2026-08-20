@@ -45,7 +45,8 @@ async function createFundedAccount(startingBalance: bigint): Promise<string> {
   const userId = randomUUID();
   const email = `test-${randomUUID()}@tappay.local`;
   await db.transaction().execute(async (trx) => {
-    await trx.insertInto("accounts").values({ account_id: accountId, user_id: userId, email, currency: "MAD" }).execute();
+    await trx.insertInto("users").values({ user_id: userId, email }).execute();
+    await trx.insertInto("accounts").values({ account_id: accountId, user_id: userId, currency: "MAD" }).execute();
     if (startingBalance > 0n) {
       const txUuid = randomUUID();
       await trx

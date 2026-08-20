@@ -84,6 +84,7 @@ const FAKE_ME: MeResponse = {
   customer_id: "10000001",
   display_name: "Test User",
   account_id: "acct-1",
+  account_type: "checking",
   rib: "999780000000000000100113",
   iban: "MA37999780000000000000100113",
   currency: "MAD",

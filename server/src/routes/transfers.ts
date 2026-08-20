@@ -6,6 +6,7 @@ import { recordAudit } from "../audit/log.js";
 import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 import { transferTotal } from "../metrics.js";
+import { resolveOwnedAccount } from "./accountSelection.js";
 import { accountScopedRateLimitedPreHandlers, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
 // Reject C0 control characters, NFC-normalize -- the reference is rendered
@@ -26,6 +27,10 @@ const transferBodySchema = z
     amount: z.string().regex(/^\d+$/, "amount must be an integer minor-units string"),
     currency: z.string().length(3),
     reference: referenceSchema,
+    // Ship List v2 Phase 8: which of the caller's own accounts sends the
+    // money -- ownership-checked via accountSelection.ts, defaults to
+    // checking. This is what lets money move OUT of savings.
+    from_account_id: z.string().uuid().optional(),
   })
   .refine((b) => Boolean(b.to_rib) !== Boolean(b.to_beneficiary_id), {
     message: "exactly one of to_rib or to_beneficiary_id must be provided",
@@ -44,8 +49,8 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       if (!parsed.success) {
         return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
       }
-      const { tx_uuid, to_rib, to_beneficiary_id, amount, currency, reference } = parsed.data;
-      const { aid: fromAccountId, sub: userId } = request.user;
+      const { tx_uuid, to_rib, to_beneficiary_id, amount, currency, reference, from_account_id } = parsed.data;
+      const { sub: userId } = request.user;
 
       const amountMinor = BigInt(amount);
       if (amountMinor <= 0n || amountMinor > config.maxTransferMinorUnits) {
@@ -54,6 +59,12 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       if (!config.supportedCurrencies.includes(currency)) {
         return reply.status(400).send({ error: "InvalidCurrency", message: `unsupported currency: ${currency}` });
       }
+
+      const fromAccount = await resolveOwnedAccount(userId, from_account_id);
+      if (!fromAccount) {
+        return reply.status(404).send({ error: "NotFound", message: "no such account" });
+      }
+      const fromAccountId = fromAccount.account_id;
 
       let resolvedRib: string;
       if (to_beneficiary_id) {
@@ -98,7 +109,12 @@ export function registerTransferRoutes(app: FastifyInstance): void {
 
       const [balance, counterparty] = await Promise.all([
         bankAdapter.getAvailableBalance(fromAccountId, currency),
-        db.selectFrom("accounts").select(["display_name", "rib"]).where("account_id", "=", recipient.account_id).executeTakeFirst(),
+        db
+          .selectFrom("accounts")
+          .innerJoin("users", "users.user_id", "accounts.user_id")
+          .select(["users.display_name as display_name", "accounts.rib as rib"])
+          .where("accounts.account_id", "=", recipient.account_id)
+          .executeTakeFirst(),
       ]);
 
       return reply.send({
@@ -118,15 +134,19 @@ export function registerTransferRoutes(app: FastifyInstance): void {
     if (!z.string().uuid().safeParse(txUuid).success) {
       return reply.status(400).send({ error: "InvalidRequest", message: "txUuid must be a UUID" });
     }
-    const { aid: accountId } = request.user;
+    const { sub: userId } = request.user;
 
     // Ownership is enforced structurally, not by a separate check: a row
-    // only exists here if `j.account_id = accountId`, i.e. the caller's own
-    // account actually participated in this tx_uuid.
+    // only exists here if `j.account_id` is one of the CALLER'S OWN accounts
+    // (Ship List v2 Phase 8: any of them, checking or savings -- not just
+    // the JWT's default `aid` -- otherwise a receipt for a settlement that
+    // happened on savings would 404 for its own owner).
     const row = await db
       .selectFrom("journal as j")
-      .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
+      .innerJoin("accounts as own", (join) => join.onRef("own.account_id", "=", "j.account_id").on("own.user_id", "=", userId))
+      .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").onRef("o.account_id", "!=", "j.account_id"))
       .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+      .leftJoin("users as counterparty_user", "counterparty_user.user_id", "counterparty.user_id")
       .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
       .leftJoin("billers as bl", "bl.account_id", "o.account_id")
       .select([
@@ -134,12 +154,11 @@ export function registerTransferRoutes(app: FastifyInstance): void {
         "j.amount as amount",
         "j.currency as currency",
         "j.created_at as created_at",
-        "counterparty.display_name as counterparty_name",
+        "counterparty_user.display_name as counterparty_name",
         "counterparty.rib as counterparty_rib",
         "t.reference as reference",
         "bl.category as biller_category",
       ])
-      .where("j.account_id", "=", accountId)
       .where("j.tx_uuid", "=", txUuid)
       .executeTakeFirst();
 

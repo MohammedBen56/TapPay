@@ -2,6 +2,7 @@ import closeWithGrace from "close-with-grace";
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
 import { db } from "./db/kysely.js";
+import { startInterestJob } from "./interest.js";
 import { redis } from "./redis.js";
 import { startSweeper } from "./sweeper.js";
 import { startTripwire } from "./tripwire.js";
@@ -10,6 +11,7 @@ const app = buildApp();
 
 const sweeper = startSweeper(db, config.sweeperIntervalMs, app.log);
 const tripwire = startTripwire(db, config.tripwireIntervalMs, app.log);
+const interestJob = startInterestJob(db, config.interestIntervalMs, config.interestRateBp, app.log);
 
 app.listen({ port: config.port, host: "0.0.0.0" }).catch((err: unknown) => {
   app.log.error(err);
@@ -38,6 +40,7 @@ closeWithGrace({ delay: 10_000 }, async ({ err }) => {
   await app.close();
   await sweeper.stop();
   await tripwire.stop();
+  await interestJob.stop();
   await db.destroy();
   redis.disconnect();
 });

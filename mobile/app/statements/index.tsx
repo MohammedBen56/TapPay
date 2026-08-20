@@ -59,7 +59,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * method already established for this app. */
 export default function StatementsScreen(): React.JSX.Element {
   const meQuery = useQuery(meQueryOptions);
-  const balanceQuery = useQuery({ queryKey: ["balance"], queryFn: api.balance, staleTime: 15_000 });
+  const balanceQuery = useQuery({ queryKey: ["balance", "default"], queryFn: () => api.balance(), staleTime: 15_000 });
   const [preset, setPreset] = useState<Preset>("3m");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");

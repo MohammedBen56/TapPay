@@ -24,10 +24,8 @@ describe("tappay_app database role privileges", () => {
       // exactly how MockBankAdapter settles a transfer.
       const accountId = randomUUID();
       const userId = randomUUID();
-      await appDb
-        .insertInto("accounts")
-        .values({ account_id: accountId, user_id: userId, email: `test-${randomUUID()}@tappay.local`, currency: "MAD" })
-        .execute();
+      await appDb.insertInto("users").values({ user_id: userId, email: `test-${randomUUID()}@tappay.local` }).execute();
+      await appDb.insertInto("accounts").values({ account_id: accountId, user_id: userId, currency: "MAD" }).execute();
       const txUuid = randomUUID();
       await expect(
         appDb

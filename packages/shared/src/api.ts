@@ -25,6 +25,7 @@ export type ErrorCode =
   | "ReservationExpired"
   | "InsufficientFunds"
   | "DuplicateBeneficiary"
+  | "DuplicateAccount"
   | "NotFound";
 
 export interface ApiErrorBody {
@@ -88,12 +89,44 @@ export interface SessionsResponse {
 }
 // DELETE /auth/sessions/:id -- 204 No Content on success, no response body.
 
+export type AccountType = "checking" | "savings";
+
+// ---- GET /accounts ----
+
+export interface AccountSummary {
+  account_id: string;
+  account_type: AccountType;
+  rib: string | null;
+  currency: string;
+  /** Minor-units decimal string. */
+  available_balance: string;
+}
+
+export interface AccountsResponse {
+  accounts: AccountSummary[];
+}
+
+// ---- POST /accounts ----
+
+export interface OpenAccountRequest {
+  /** The only client-choosable type -- `checking` always exists already. */
+  account_type: "savings";
+}
+
+export type OpenAccountResponse = AccountSummary;
+
 // ---- GET /me ----
+
+export interface MeQuery {
+  /** Ship List v2 Phase 8 -- omit for the caller's checking account. */
+  account_id?: string;
+}
 
 export interface MeResponse {
   customer_id: string;
   display_name: string;
   account_id: string;
+  account_type: AccountType;
   rib: string;
   iban: string;
   currency: string;
@@ -101,8 +134,13 @@ export interface MeResponse {
 
 // ---- GET /accounts/me/balance ----
 
+export interface BalanceQuery {
+  account_id?: string;
+}
+
 export interface BalanceResponse {
   account_id: string;
+  account_type: AccountType;
   currency: string;
   /** Minor-units decimal string, e.g. "125000" for 1,250.00 MAD. */
   available_balance: string;
@@ -142,6 +180,7 @@ export interface DataExportResponse {
     customer_id: string;
     display_name: string;
     account_id: string;
+    account_type: AccountType;
     rib: string;
     currency: string;
     account_created_at: string;
@@ -158,6 +197,8 @@ export interface StatementQuery {
   from: string;
   /** YYYY-MM-DD, inclusive (through end of day). */
   to: string;
+  /** Ship List v2 Phase 8 -- omit for the caller's checking account. */
+  account_id?: string;
 }
 
 export interface StatementTransaction {
@@ -213,6 +254,8 @@ export interface TransactionsResponse {
 export interface TransactionsQuery {
   limit?: number;
   before?: string;
+  /** Ship List v2 Phase 8 -- omit for the caller's checking account. */
+  account_id?: string;
 }
 
 // ---- POST /transfers ----
@@ -225,6 +268,9 @@ export interface CreateTransferRequest {
   amount: string;
   currency: string;
   reference: string;
+  /** Ship List v2 Phase 8 -- which of the caller's own accounts sends the
+   * money. Omit for the caller's checking account. */
+  from_account_id?: string;
 }
 
 export interface CreateTransferResponse {

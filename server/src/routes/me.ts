@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bankAdapter } from "../adapters/index.js";
 import { recordAudit } from "../audit/log.js";
 import { db } from "../db/kysely.js";
+import { resolveOwnedAccount } from "./accountSelection.js";
 import { createCursorCodec } from "./cursor.js";
 
 // Ship List v2's data-export route reads every one of a customer's own
@@ -25,13 +26,18 @@ const DATA_EXPORT_ROW_CAP = 10_000;
 // this within any real statement period.
 const STATEMENT_ROW_CAP = 5_000;
 
-const transactionsQuerySchema = z.object({
+// Ship List v2 Phase 8: every account-scoped GET accepts this same
+// optional `account_id`, resolved via accountSelection.ts's ownership
+// check. Absent -> the caller's checking account (unchanged behavior).
+const accountIdQuerySchema = z.object({ account_id: z.string().uuid().optional() });
+
+const transactionsQuerySchema = accountIdQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   before: z.string().optional(),
 });
 
-const statementQuerySchema = z
-  .object({
+const statementQuerySchema = accountIdQuerySchema
+  .extend({
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "from must be YYYY-MM-DD"),
     to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "to must be YYYY-MM-DD"),
   })
@@ -48,21 +54,24 @@ const cursorCodec = createCursorCodec<bigint>(
   },
 );
 
-/** GET /me, and the two account-scoped reads (balance, transaction history)
- * that make up the Home screen (docs/TapPay_v2_Technical_Design.md §5).
- * Every route here is `me`-scoped from the access token's `aid`/`sub`
- * claims, never a client-supplied account id -- zero IDOR surface, unlike
- * the parked GET /accounts/:accountId/balance this replaces functionally
- * (that route stays live too, unauthenticated, until nothing references it
- * -- see routes/tx.ts's own doc comment). */
+/** GET /me, and the account-scoped reads (balance, transaction history,
+ * statement, data export) that make up the Home screen (docs/
+ * TapPay_v2_Technical_Design.md §5). Every route here resolves its account
+ * from the access token's `sub` claim via accountSelection.ts's ownership
+ * check -- a `?account_id=` is accepted (Ship List v2 Phase 8, multiple
+ * accounts per customer) but always checked against the caller's own
+ * `user_id` first, never trusted bare (CLAUDE.md §5). Unlike the parked
+ * `GET /accounts/:accountId/balance` this replaces functionally (that
+ * route stays live too, unauthenticated, until nothing references it --
+ * see routes/tx.ts's own doc comment), there is zero IDOR surface here. */
 export function registerMeRoutes(app: FastifyInstance): void {
   app.get("/me", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { aid: accountId, cid: customerId } = request.user;
-    const account = await db
-      .selectFrom("accounts")
-      .select(["display_name", "rib", "currency"])
-      .where("account_id", "=", accountId)
-      .executeTakeFirst();
+    const { sub: userId, cid: customerId } = request.user;
+    const parsed = accountIdQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const account = await resolveOwnedAccount(userId, parsed.data.account_id);
 
     if (!account || !account.rib || !account.display_name) {
       // A real logged-in customer always has both -- seed.ts sets them at
@@ -73,7 +82,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
     return reply.send({
       customer_id: customerId,
       display_name: account.display_name,
-      account_id: accountId,
+      account_id: account.account_id,
+      account_type: account.account_type,
       rib: account.rib,
       iban: ribToIban(account.rib),
       currency: account.currency,
@@ -81,19 +91,38 @@ export function registerMeRoutes(app: FastifyInstance): void {
   });
 
   app.get("/accounts/me/balance", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { aid: accountId } = request.user;
+    const { sub: userId } = request.user;
+    const parsed = accountIdQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const account = await resolveOwnedAccount(userId, parsed.data.account_id);
+    if (!account) {
+      return reply.status(404).send({ error: "NotFound", message: "no such account" });
+    }
     const { currency } = request.query as { currency?: string };
-    const balance = await bankAdapter.getAvailableBalance(accountId, currency ?? "MAD");
-    return reply.send({ account_id: accountId, currency: currency ?? "MAD", available_balance: balance.toString() });
+    const resolvedCurrency = currency ?? account.currency;
+    const balance = await bankAdapter.getAvailableBalance(account.account_id, resolvedCurrency);
+    return reply.send({
+      account_id: account.account_id,
+      account_type: account.account_type,
+      currency: resolvedCurrency,
+      available_balance: balance.toString(),
+    });
   });
 
   app.get("/accounts/me/transactions", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { aid: accountId } = request.user;
+    const { sub: userId } = request.user;
     const parsed = transactionsQuerySchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
     }
-    const { limit, before } = parsed.data;
+    const { limit, before, account_id } = parsed.data;
+    const account = await resolveOwnedAccount(userId, account_id);
+    if (!account) {
+      return reply.status(404).send({ error: "NotFound", message: "no such account" });
+    }
+    const accountId = account.account_id;
 
     let cursor: { createdAt: Date; tiebreak: bigint } | null = null;
     if (before !== undefined) {
@@ -110,11 +139,14 @@ export function registerMeRoutes(app: FastifyInstance): void {
     // LEFT JOIN billers on the counterparty's account_id so a bill payment's
     // counterparty (which IS just an accounts row, see 018_billers.cjs) is
     // additionally flagged as one -- lets the mobile client render a bill
-    // category icon instead of the generic person avatar.
+    // category icon instead of the generic person avatar. The counterparty's
+    // display_name now lives on `users` (Ship List v2 Phase 8), so the
+    // counterparty join goes one hop further: accounts -> users.
     let query = db
       .selectFrom("journal as j")
       .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
       .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+      .leftJoin("users as counterparty_user", "counterparty_user.user_id", "counterparty.user_id")
       .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
       .leftJoin("billers as bl", "bl.account_id", "o.account_id")
       .select([
@@ -123,7 +155,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
         "j.amount as amount",
         "j.currency as currency",
         "j.created_at as created_at",
-        "counterparty.display_name as counterparty_name",
+        "counterparty_user.display_name as counterparty_name",
         "counterparty.rib as counterparty_rib",
         "t.reference as reference",
         "bl.category as biller_category",
@@ -169,21 +201,30 @@ export function registerMeRoutes(app: FastifyInstance): void {
   // billPayments.ts -- this just bundles them. Audit-logged like every
   // other sensitive action (server/src/audit/log.ts).
   app.get("/me/data-export", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { aid: accountId, sub: userId, cid: customerId } = request.user;
+    const { sub: userId, cid: customerId } = request.user;
+    const parsed = accountIdQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const account = await resolveOwnedAccount(userId, parsed.data.account_id);
+    if (!account) {
+      return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
+    }
+    const accountId = account.account_id;
 
-    const [account, transactions, billPayments, beneficiaries] = await Promise.all([
-      db.selectFrom("accounts").select(["display_name", "rib", "currency", "created_at"]).where("account_id", "=", accountId).executeTakeFirst(),
+    const [transactions, billPayments, beneficiaries] = await Promise.all([
       db
         .selectFrom("journal as j")
         .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
         .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+        .leftJoin("users as counterparty_user", "counterparty_user.user_id", "counterparty.user_id")
         .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
         .select([
           "j.tx_uuid as tx_uuid",
           "j.amount as amount",
           "j.currency as currency",
           "j.created_at as created_at",
-          "counterparty.display_name as counterparty_name",
+          "counterparty_user.display_name as counterparty_name",
           "counterparty.rib as counterparty_rib",
           "t.reference as reference",
         ])
@@ -203,11 +244,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
       db.selectFrom("beneficiaries").select(["display_name", "rib", "created_at"]).where("owner_user_id", "=", userId).execute(),
     ]);
 
-    if (!account) {
-      return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
-    }
-
-    await recordAudit({ userId, action: "data_export.request", resourceType: "account", ip: request.ip });
+    await recordAudit({ userId, action: "data_export.request", resourceType: "account", resourceId: accountId, ip: request.ip });
 
     return reply.send({
       exported_at: new Date().toISOString(),
@@ -215,6 +252,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
         customer_id: customerId,
         display_name: account.display_name,
         account_id: accountId,
+        account_type: account.account_type,
         rib: account.rib,
         currency: account.currency,
         account_created_at: account.created_at.toISOString(),
@@ -251,23 +289,20 @@ export function registerMeRoutes(app: FastifyInstance): void {
   // treated as inclusive through end-of-day, matching how a customer picks
   // a calendar date range, not an exact instant.
   app.get("/accounts/me/statement", { preHandler: [app.authenticate] }, async (request, reply) => {
-    const { aid: accountId, cid: customerId } = request.user;
+    const { sub: userId, cid: customerId } = request.user;
     const parsed = statementQuerySchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
     }
-    const { from, to } = parsed.data;
+    const { from, to, account_id } = parsed.data;
     const fromDate = new Date(`${from}T00:00:00.000Z`);
     const toDateExclusive = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000);
 
-    const account = await db
-      .selectFrom("accounts")
-      .select(["display_name", "rib", "currency"])
-      .where("account_id", "=", accountId)
-      .executeTakeFirst();
+    const account = await resolveOwnedAccount(userId, account_id);
     if (!account || !account.rib || !account.display_name) {
       return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
     }
+    const accountId = account.account_id;
 
     const [openingRow, rangeRows] = await Promise.all([
       db
@@ -281,13 +316,14 @@ export function registerMeRoutes(app: FastifyInstance): void {
         .selectFrom("journal as j")
         .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
         .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+        .leftJoin("users as counterparty_user", "counterparty_user.user_id", "counterparty.user_id")
         .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
         .select([
           "j.tx_uuid as tx_uuid",
           "j.amount as amount",
           "j.currency as currency",
           "j.created_at as created_at",
-          "counterparty.display_name as counterparty_name",
+          "counterparty_user.display_name as counterparty_name",
           "counterparty.rib as counterparty_rib",
           "t.reference as reference",
         ])
@@ -302,7 +338,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
     const openingBalance = openingRow?.total ?? 0n;
     const closingBalance = rangeRows.reduce((sum, r) => sum + r.amount, openingBalance);
 
-    await recordAudit({ userId: request.user.sub, action: "statement.request", resourceType: "account", ip: request.ip });
+    await recordAudit({ userId, action: "statement.request", resourceType: "account", resourceId: accountId, ip: request.ip });
 
     return reply.send({
       customer_id: customerId,

@@ -34,16 +34,20 @@ export function registerBeneficiaryRoutes(app: FastifyInstance): void {
       return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
     }
     const { display_name, rib } = parsed.data;
-    const { sub: userId, aid: accountId } = request.user;
+    const { sub: userId } = request.user;
 
     if (!isValidRib(rib)) {
       return reply.status(400).send({ error: "InvalidRib", message: "rib is not a valid RIB" });
     }
-    const target = await db.selectFrom("accounts").select(["account_id"]).where("rib", "=", rib).executeTakeFirst();
+    const target = await db.selectFrom("accounts").select(["account_id", "user_id"]).where("rib", "=", rib).executeTakeFirst();
     if (!target) {
       return reply.status(404).send({ error: "UnknownRecipient", message: "no account with this RIB" });
     }
-    if (target.account_id === accountId) {
+    // Ship List v2 Phase 8: a customer can own more than one account
+    // (checking + savings) -- compare by user_id, not the JWT's single
+    // `aid`, so this rejects ANY of the caller's own accounts, not just
+    // whichever one happens to be the default.
+    if (target.user_id === userId) {
       return reply.status(400).send({ error: "SelfPayment", message: "cannot add yourself as a beneficiary" });
     }
 

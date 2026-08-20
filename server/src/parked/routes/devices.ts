@@ -60,19 +60,28 @@ export function registerDeviceRoutes(app: FastifyInstance): void {
       const verification = verifyAttestationChain(attestationChainDer, challenge, identityPubkeyBytes);
 
       const outcome = await db.transaction().execute(async (trx) => {
+        // Ship List v2 Phase 8: email now lives on `users`, not `accounts`.
+        // An existing identity resolves to its checking account -- the one
+        // this parked enrollment flow has always dealt with; savings
+        // (unreachable from this path) doesn't change that.
         const existing = await trx
-          .selectFrom("accounts")
-          .select(["account_id", "user_id"])
-          .where("email", "=", email)
+          .selectFrom("users")
+          .innerJoin("accounts", (join) => join.onRef("accounts.user_id", "=", "users.user_id").on("accounts.account_type", "=", "checking"))
+          .select(["accounts.account_id as account_id", "users.user_id as user_id"])
+          .where("users.email", "=", email)
           .executeTakeFirst();
 
         const account =
           existing ??
-          (await trx
-            .insertInto("accounts")
-            .values({ account_id: randomUUID(), user_id: randomUUID(), email, currency: "MAD" })
-            .returning(["account_id", "user_id"])
-            .executeTakeFirstOrThrow());
+          (await (async () => {
+            const newUserId = randomUUID();
+            await trx.insertInto("users").values({ user_id: newUserId, email }).execute();
+            return trx
+              .insertInto("accounts")
+              .values({ account_id: randomUUID(), user_id: newUserId, currency: "MAD" })
+              .returning(["account_id", "user_id"])
+              .executeTakeFirstOrThrow();
+          })());
 
         // device_id has no natural owner beyond whoever first claimed it (it's
         // client-chosen, same family of issue as the tx_uuid hijack fixes

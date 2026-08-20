@@ -1,4 +1,6 @@
 import type {
+  AccountsResponse,
+  BalanceQuery,
   BalanceResponse,
   BeneficiariesResponse,
   BillersResponse,
@@ -14,7 +16,10 @@ import type {
   LoginRequest,
   LoginResponse,
   LogoutRequest,
+  MeQuery,
   MeResponse,
+  OpenAccountRequest,
+  OpenAccountResponse,
   PayBillRequest,
   PayBillResponse,
   RefreshRequest,
@@ -35,8 +40,13 @@ function query(params: TransactionsQuery = {}): string {
   const search = new URLSearchParams();
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   if (params.before !== undefined) search.set("before", params.before);
+  if (params.account_id !== undefined) search.set("account_id", params.account_id);
   const qs = search.toString();
   return qs ? `?${qs}` : "";
+}
+
+function accountQuery(params: MeQuery | BalanceQuery = {}): string {
+  return params.account_id !== undefined ? `?account_id=${encodeURIComponent(params.account_id)}` : "";
 }
 
 function billPaymentsQuery(params: BillPaymentsQuery = {}): string {
@@ -55,12 +65,17 @@ export const api = {
   sessions: () => apiRequest<SessionsResponse>("/auth/sessions"),
   revokeSession: (id: string) => apiRequest<void>(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  me: () => apiRequest<MeResponse>("/me"),
-  dataExport: () => apiRequest<DataExportResponse>("/me/data-export"),
-  balance: () => apiRequest<BalanceResponse>("/accounts/me/balance"),
+  accounts: () => apiRequest<AccountsResponse>("/accounts"),
+  openAccount: (body: OpenAccountRequest) => apiRequest<OpenAccountResponse>("/accounts", { method: "POST", body }),
+
+  me: (params?: MeQuery) => apiRequest<MeResponse>(`/me${accountQuery(params)}`),
+  dataExport: (params?: MeQuery) => apiRequest<DataExportResponse>(`/me/data-export${accountQuery(params)}`),
+  balance: (params?: BalanceQuery) => apiRequest<BalanceResponse>(`/accounts/me/balance${accountQuery(params)}`),
   transactions: (params?: TransactionsQuery) => apiRequest<TransactionsResponse>(`/accounts/me/transactions${query(params)}`),
   statement: (params: StatementQuery) =>
-    apiRequest<StatementResponse>(`/accounts/me/statement?from=${params.from}&to=${params.to}`),
+    apiRequest<StatementResponse>(
+      `/accounts/me/statement?from=${params.from}&to=${params.to}${params.account_id ? `&account_id=${encodeURIComponent(params.account_id)}` : ""}`,
+    ),
 
   createTransfer: (body: CreateTransferRequest) => apiRequest<CreateTransferResponse>("/transfers", { method: "POST", body }),
   transfer: (txUuid: string) => apiRequest<TransferDetailResponse>(`/transfers/${encodeURIComponent(txUuid)}`),

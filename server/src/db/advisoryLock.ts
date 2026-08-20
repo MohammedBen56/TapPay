@@ -47,3 +47,4 @@ export async function withAdvisoryLock<T>(
 // take an advisory lock (nothing else does today).
 export const SWEEPER_ADVISORY_LOCK_KEY = 90_210_001;
 export const TRIPWIRE_ADVISORY_LOCK_KEY = 90_210_002;
+export const INTEREST_ADVISORY_LOCK_KEY = 90_210_003;

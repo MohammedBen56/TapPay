@@ -65,6 +65,13 @@ export function registerAuthRoutes(app: FastifyInstance): void {
           "accounts.account_id",
         ])
         .where("customer_credentials.customer_id", "=", customer_id)
+        // Ship List v2 Phase 8: a customer can now own more than one
+        // accounts row (checking + savings) -- without this, the JWT's
+        // `aid` claim would bind non-deterministically to whichever row
+        // Postgres happened to return first. `aid` always means checking;
+        // account selection for the rest is via accountSelection.ts's
+        // explicit ?account_id=, never the JWT claim itself.
+        .where("accounts.account_type", "=", "checking")
         .executeTakeFirst();
 
       if (!cred) {
@@ -133,6 +140,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       .innerJoin("accounts", "accounts.user_id", "customer_credentials.user_id")
       .select(["customer_credentials.customer_id", "accounts.account_id"])
       .where("customer_credentials.user_id", "=", result.userId)
+      // Same Ship List v2 Phase 8 fix as /auth/login above -- `aid` always
+      // means checking.
+      .where("accounts.account_type", "=", "checking")
       .executeTakeFirstOrThrow();
 
     const accessToken = await signAccessToken(app, {

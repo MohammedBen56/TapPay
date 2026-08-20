@@ -12,7 +12,7 @@ import { api } from "./endpoints";
 
 export const meQueryOptions: UseQueryOptions<MeResponse> = {
   queryKey: ["me"],
-  queryFn: api.me,
+  queryFn: () => api.me(),
   staleTime: 5 * 60_000,
 };
 

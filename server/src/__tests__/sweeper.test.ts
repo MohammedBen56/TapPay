@@ -9,10 +9,9 @@ const stubSigner: ReceiptSigner = async () => new Uint8Array([1, 2, 3]);
 async function createFundedAccount(startingBalance: bigint): Promise<string> {
   const accountId = randomUUID();
   await db.transaction().execute(async (trx) => {
-    await trx
-      .insertInto("accounts")
-      .values({ account_id: accountId, user_id: randomUUID(), email: `test-${randomUUID()}@tappay.local`, currency: "MAD" })
-      .execute();
+    const userId = randomUUID();
+    await trx.insertInto("users").values({ user_id: userId, email: `test-${randomUUID()}@tappay.local` }).execute();
+    await trx.insertInto("accounts").values({ account_id: accountId, user_id: userId, currency: "MAD" }).execute();
     if (startingBalance > 0n) {
       const txUuid = randomUUID();
       await trx

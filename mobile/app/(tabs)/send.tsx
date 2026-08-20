@@ -65,6 +65,13 @@ export default function SendScreen(): React.JSX.Element {
   const [savingContact, setSavingContact] = useState(false);
   const [contactSaved, setContactSaved] = useState(false);
 
+  // Ship List v2 Phase 8: shown only once a savings account exists --
+  // otherwise this stays undefined and the backend's own default (checking)
+  // applies, identical to pre-Phase-8 behavior.
+  const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: api.accounts, staleTime: 60_000 });
+  const accounts = accountsQuery.data?.accounts ?? [];
+  const [fromAccountId, setFromAccountId] = useState<string | undefined>(undefined);
+
   const txUuidRef = useRef<string>(uuidv4());
 
   const resetFlow = useCallback(() => {
@@ -175,10 +182,14 @@ export default function SendScreen(): React.JSX.Element {
         amount: amountMinor,
         currency: "MAD",
         reference: referenceInput.trim(),
+        from_account_id: fromAccountId,
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Prefix match invalidates every account's balance/transactions --
+      // an internal transfer moves both sides' balances at once.
       void queryClient.invalidateQueries({ queryKey: ["balance"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["accounts"] });
       setSettledAmount(result.amount);
       setSettledTxUuid(result.tx_uuid);
       setStep("success");
@@ -319,6 +330,16 @@ export default function SendScreen(): React.JSX.Element {
 
           {step === "review" && recipient && (
             <Animated.View entering={FadeInRight.duration(250)} exiting={FadeOutLeft.duration(150)} style={styles.gap24}>
+              {accounts.length > 1 && (
+                <View style={styles.fromAccountWrap}>
+                  <Text style={styles.fromAccountLabel}>From</Text>
+                  <SegmentedControl
+                    options={accounts.map((a) => ({ value: a.account_id, label: a.account_type === "savings" ? "Savings" : "Checking" }))}
+                    value={fromAccountId ?? accounts.find((a) => a.account_type === "checking")?.account_id ?? accounts[0]!.account_id}
+                    onChange={setFromAccountId}
+                  />
+                </View>
+              )}
               <Card style={styles.reviewCard}>
                 <ReviewRow label="To" value={recipient.displayName} />
                 <ReviewRow label="RIB" value={formatRibGrouped(recipient.rib)} />
@@ -626,6 +647,14 @@ const styles = StyleSheet.create({
   amountInputWrap: { alignItems: "center" },
   amountField: { fontFamily: type.hero.family, fontSize: 36, textAlign: "center", height: 72 },
   amountPreview: { fontFamily: type.hero.family, fontSize: 36, color: colors.bone, textAlign: "center" },
+  fromAccountWrap: { gap: 8 },
+  fromAccountLabel: {
+    fontFamily: type.sectionLabel.family,
+    fontSize: type.sectionLabel.size,
+    letterSpacing: type.sectionLabel.letterSpacing,
+    color: colors.textQuiet,
+    textTransform: "uppercase",
+  },
   reviewCard: { gap: 16 },
   successWrap: { alignItems: "center", gap: 8, width: "100%" },
   successIcon: {

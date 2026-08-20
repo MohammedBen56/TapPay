@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { useAuth } from "../../src/auth/AuthContext";
@@ -10,22 +10,45 @@ import { getBalanceVisible, setBalanceVisible } from "../../src/auth/balanceVisi
 import { Card } from "../../src/components/Card";
 import { GlassButton } from "../../src/components/GlassButton";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
+import { SegmentedControl } from "../../src/components/SegmentedControl";
 import { TransactionRow } from "../../src/components/TransactionRow";
 import { api } from "../../src/api/endpoints";
 import { colors, radius, type } from "../../src/design/tokens";
 import { formatMAD } from "../../src/design/format";
 
+const ACCOUNT_TYPE_LABEL: Record<string, string> = { checking: "Checking", savings: "Savings" };
+
 export default function HomeScreen(): React.JSX.Element {
   const { account } = useAuth();
   const queryClient = useQueryClient();
   const [visible, setVisible] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     void getBalanceVisible().then(setVisible);
   }, []);
 
-  const balanceQuery = useQuery({ queryKey: ["balance"], queryFn: api.balance });
-  const transactionsQuery = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions({ limit: 20 }) });
+  // Ship List v2 Phase 8: a savings account, once opened, shows up here as a
+  // second segment -- otherwise this list has exactly one entry (checking)
+  // and the switcher never renders, so a customer without savings sees
+  // exactly the same Home screen as before this feature existed.
+  const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: api.accounts, staleTime: 60_000 });
+  const accounts = useMemo(() => accountsQuery.data?.accounts ?? [], [accountsQuery.data]);
+  const activeAccountId = selectedAccountId ?? accounts.find((a) => a.account_type === "checking")?.account_id;
+
+  const balanceQuery = useQuery({
+    queryKey: ["balance", activeAccountId ?? "default"],
+    queryFn: () => api.balance(activeAccountId ? { account_id: activeAccountId } : undefined),
+  });
+  const transactionsQuery = useQuery({
+    queryKey: ["transactions", activeAccountId ?? "default"],
+    queryFn: () => api.transactions({ limit: 20, account_id: activeAccountId }),
+  });
+
+  const segmentOptions = useMemo(
+    () => accounts.map((a) => ({ value: a.account_id, label: ACCOUNT_TYPE_LABEL[a.account_type] ?? a.account_type })),
+    [accounts],
+  );
 
   const toggleVisible = (): void => {
     const next = !visible;
@@ -36,6 +59,7 @@ export default function HomeScreen(): React.JSX.Element {
   const onRefresh = (): void => {
     void queryClient.invalidateQueries({ queryKey: ["balance"] });
     void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    void queryClient.invalidateQueries({ queryKey: ["accounts"] });
   };
 
   const transactions = transactionsQuery.data?.transactions ?? [];
@@ -50,6 +74,12 @@ export default function HomeScreen(): React.JSX.Element {
             <Text style={styles.name}>{account?.display_name ?? "—"}</Text>
           </View>
         </Animated.View>
+
+        {segmentOptions.length > 1 && (
+          <Animated.View entering={FadeIn.delay(40).duration(400)} style={styles.switcherWrap}>
+            <SegmentedControl options={segmentOptions} value={activeAccountId ?? segmentOptions[0]!.value} onChange={setSelectedAccountId} />
+          </Animated.View>
+        )}
 
         <Animated.View entering={FadeIn.delay(80).duration(450)}>
           <Card style={styles.balanceCard}>
@@ -107,6 +137,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   greeting: { fontFamily: type.caption.family, fontSize: 13, color: colors.textSecondary },
   name: { fontFamily: type.screenTitle.family, fontSize: 22, color: colors.bone, marginTop: 2 },
+  switcherWrap: { marginBottom: 12 },
   balanceCard: { alignItems: "center", gap: 4, paddingVertical: 28, borderRadius: radius.xl },
   balanceRow: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "stretch", justifyContent: "center" },
   balanceLabel: {

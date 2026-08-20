@@ -17,16 +17,31 @@ pg.types.setTypeParser(1700, BigInt);
 // Mirrors the nil-UUID mint account inserted by migrations/001_accounts.cjs.
 export const MINT_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 
+export type AccountType = "checking" | "savings";
+
+/** Ship List v2 Phase 8 (022_users_table.cjs): a customer identity
+ * (user_id/email/display_name, one per human) that email/display_name
+ * used to live on directly, back when a customer could only ever have one
+ * accounts row. See docs/adr/0011-users-table-extraction.md for why the
+ * extraction was necessary, not just tidying. */
+export interface UsersTable {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface AccountsTable {
   account_id: Generated<string>;
   user_id: string;
-  email: string;
   currency: Generated<string>;
   is_mint: Generated<boolean>;
   created_at: Generated<Date>;
-  /** v2: nullable -- the seeded mint account (001_accounts.cjs) has neither. */
-  display_name: string | null;
   rib: string | null;
+  /** Ship List v2 Phase 8: at most one 'checking' + one 'savings' per
+   * user_id (accounts_user_id_account_type_key). Every account predating
+   * this migration defaulted to 'checking'. */
+  account_type: Generated<AccountType>;
 }
 
 export interface DevicesTable {
@@ -182,6 +197,7 @@ export interface AuditLogTable {
 }
 
 export interface Database {
+  users: UsersTable;
   accounts: AccountsTable;
   devices: DevicesTable;
   journal: JournalTable;
