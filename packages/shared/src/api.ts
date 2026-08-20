@@ -19,6 +19,7 @@ export type ErrorCode =
   | "InvalidRib"
   | "UnknownBeneficiary"
   | "UnknownRecipient"
+  | "UnknownBiller"
   | "SelfPayment"
   | "TxUuidConflict"
   | "ReservationExpired"
@@ -64,6 +65,29 @@ export interface LogoutRequest {
 }
 // 204 No Content on success -- no response body.
 
+// ---- POST /auth/change-password ----
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+// 204 No Content on success -- no response body. Revokes every active
+// session for the user (server/src/auth/refreshTokens.ts's
+// revokeAllSessionsForUser) -- the caller itself gets signed out too.
+
+// ---- /auth/sessions ----
+
+export interface SessionSummary {
+  id: string;
+  issued_at: string;
+  expires_at: string;
+}
+
+export interface SessionsResponse {
+  sessions: SessionSummary[];
+}
+// DELETE /auth/sessions/:id -- 204 No Content on success, no response body.
+
 // ---- GET /me ----
 
 export interface MeResponse {
@@ -84,9 +108,88 @@ export interface BalanceResponse {
   available_balance: string;
 }
 
+// ---- GET /me/data-export ----
+
+export interface DataExportTransaction {
+  tx_uuid: string;
+  direction: "debit" | "credit";
+  amount: string;
+  currency: string;
+  counterparty_name: string | null;
+  counterparty_rib: string | null;
+  reference: string | null;
+  created_at: string;
+}
+
+export interface DataExportBillPayment {
+  tx_uuid: string;
+  biller_name: string;
+  subscriber_reference: string;
+  amount: string;
+  currency: string;
+  created_at: string;
+}
+
+export interface DataExportBeneficiary {
+  display_name: string;
+  rib: string;
+  created_at: string;
+}
+
+export interface DataExportResponse {
+  exported_at: string;
+  profile: {
+    customer_id: string;
+    display_name: string;
+    account_id: string;
+    rib: string;
+    currency: string;
+    account_created_at: string;
+  };
+  transactions: DataExportTransaction[];
+  bill_payments: DataExportBillPayment[];
+  beneficiaries: DataExportBeneficiary[];
+}
+
+// ---- GET /accounts/me/statement ----
+
+export interface StatementQuery {
+  /** YYYY-MM-DD, inclusive. */
+  from: string;
+  /** YYYY-MM-DD, inclusive (through end of day). */
+  to: string;
+}
+
+export interface StatementTransaction {
+  tx_uuid: string;
+  direction: "debit" | "credit";
+  amount: string;
+  currency: string;
+  counterparty_name: string | null;
+  counterparty_rib: string | null;
+  reference: string | null;
+  created_at: string;
+}
+
+export interface StatementResponse {
+  customer_id: string;
+  display_name: string;
+  rib: string;
+  currency: string;
+  from: string;
+  to: string;
+  /** Minor-units decimal string; may be negative. */
+  opening_balance: string;
+  /** Minor-units decimal string; may be negative. */
+  closing_balance: string;
+  transactions: StatementTransaction[];
+}
+
 // ---- GET /accounts/me/transactions ----
 
 export type TransactionDirection = "debit" | "credit";
+
+export type BillerCategory = "electricity" | "water" | "internet";
 
 export interface TransactionSummary {
   tx_uuid: string;
@@ -97,6 +200,9 @@ export interface TransactionSummary {
   counterparty_rib: string | null;
   reference: string | null;
   created_at: string;
+  /** True when the counterparty is a biller (bill payment), not a person. */
+  is_biller: boolean;
+  biller_category: BillerCategory | null;
 }
 
 export interface TransactionsResponse {
@@ -142,6 +248,8 @@ export interface TransferDetailResponse {
   counterparty_rib: string | null;
   reference: string | null;
   created_at: string;
+  is_biller: boolean;
+  biller_category: BillerCategory | null;
 }
 
 // ---- GET /lookup/rib/:rib ----
@@ -175,3 +283,63 @@ export interface UpdateBeneficiaryRequest {
 }
 
 export type UpdateBeneficiaryResponse = Beneficiary;
+
+// ---- GET /billers ----
+
+export interface Biller {
+  id: string;
+  name: string;
+  category: BillerCategory;
+}
+
+export interface BillersResponse {
+  billers: Biller[];
+}
+
+// ---- POST /bill-payments ----
+
+export interface PayBillRequest {
+  tx_uuid: string;
+  biller_id: string;
+  subscriber_reference: string;
+  /** Minor-units decimal string. */
+  amount: string;
+  currency: string;
+}
+
+export interface PayBillResponse {
+  tx_uuid: string;
+  settled_at: string;
+  biller: Biller;
+  subscriber_reference: string;
+  amount: string;
+  currency: string;
+  reference: string;
+  balance_after: string;
+}
+
+// ---- GET /bill-payments ----
+
+export interface BillPaymentSummary {
+  tx_uuid: string;
+  biller: Biller;
+  subscriber_reference: string;
+  amount: string;
+  currency: string;
+  reference: string;
+  created_at: string;
+}
+
+export interface BillPaymentsResponse {
+  bill_payments: BillPaymentSummary[];
+  next_cursor: string | null;
+}
+
+export interface BillPaymentsQuery {
+  limit?: number;
+  before?: string;
+}
+
+// ---- GET /bill-payments/:txUuid ----
+
+export type BillPaymentDetailResponse = BillPaymentSummary;

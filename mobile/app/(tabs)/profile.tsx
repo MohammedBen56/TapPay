@@ -2,14 +2,14 @@ import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useCallback, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
-import { api } from "../../src/api/endpoints";
+import { meQueryOptions } from "../../src/api/queries";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Card } from "../../src/components/Card";
 import { ConfirmDialog } from "../../src/components/ConfirmDialog";
@@ -22,7 +22,7 @@ import { startNfcSharing, stopNfcSharing } from "../../src/nfc/nfcHce";
 
 export default function ProfileScreen(): React.JSX.Element {
   const { logout } = useAuth();
-  const meQuery = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const meQuery = useQuery(meQueryOptions);
   const viewShotRef = useRef<ViewShotRef>(null);
   const [copied, setCopied] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
@@ -122,6 +122,7 @@ export default function ProfileScreen(): React.JSX.Element {
               setNfcSharing(true);
             }}
           />
+          <GlassButton label="Settings" variant="ghost" onPress={() => router.push("/settings")} />
         </View>
 
         <GlassButton label="Sign out" variant="danger" onPress={handleSignOut} style={styles.signOut} />

@@ -2,32 +2,51 @@ import { ribToIban } from "@tappay/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { bankAdapter } from "../adapters/index.js";
+import { recordAudit } from "../audit/log.js";
 import { db } from "../db/kysely.js";
+import { createCursorCodec } from "./cursor.js";
+
+// Ship List v2's data-export route reads every one of a customer's own
+// transaction/bill-payment rows in a single response, deliberately not
+// paginated -- a data-rights export is a complete snapshot, not something
+// meant to be browsed incrementally. Capped rather than truly unbounded:
+// a customer with more than this many lifetime transactions would need
+// the async-job-based export the Ship List's own Recommended bucket
+// already names (generate off the request path, notify when ready) --
+// not a problem this demo-scale app's seeded data will ever hit, but the
+// cap documents the real limitation rather than silently having one.
+const DATA_EXPORT_ROW_CAP = 10_000;
+
+// A statement covers a bounded date range (Ship List v2 item #4, owner-
+// requested -- "export a transaction of past few months for official
+// purposes like applying to visa"), unlike the data-export route above,
+// which is a full-lifetime snapshot. Capped defensively for the same
+// reason DATA_EXPORT_ROW_CAP is: a demo-scale account will never approach
+// this within any real statement period.
+const STATEMENT_ROW_CAP = 5_000;
 
 const transactionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   before: z.string().optional(),
 });
 
-interface TransactionCursor {
-  createdAt: Date;
-  id: bigint;
-}
+const statementQuerySchema = z
+  .object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "from must be YYYY-MM-DD"),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "to must be YYYY-MM-DD"),
+  })
+  .refine((q) => new Date(q.from) <= new Date(q.to), { message: "from must not be after to" });
 
-function encodeCursor(createdAt: Date, id: bigint): string {
-  return Buffer.from(JSON.stringify({ createdAt: createdAt.toISOString(), id: id.toString() })).toString("base64url");
-}
-
-function decodeCursor(raw: string): TransactionCursor | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as { createdAt: string; id: string };
-    const createdAt = new Date(parsed.createdAt);
-    if (Number.isNaN(createdAt.getTime())) return null;
-    return { createdAt, id: BigInt(parsed.id) };
-  } catch {
-    return null;
-  }
-}
+const cursorCodec = createCursorCodec<bigint>(
+  (id) => id.toString(),
+  (s) => {
+    try {
+      return BigInt(s);
+    } catch {
+      return null;
+    }
+  },
+);
 
 /** GET /me, and the two account-scoped reads (balance, transaction history)
  * that make up the Home screen (docs/TapPay_v2_Technical_Design.md §5).
@@ -76,9 +95,9 @@ export function registerMeRoutes(app: FastifyInstance): void {
     }
     const { limit, before } = parsed.data;
 
-    let cursor: TransactionCursor | null = null;
+    let cursor: { createdAt: Date; tiebreak: bigint } | null = null;
     if (before !== undefined) {
-      cursor = decodeCursor(before);
+      cursor = cursorCodec.decode(before);
       if (!cursor) {
         return reply.status(400).send({ error: "InvalidRequest", message: "malformed cursor" });
       }
@@ -88,11 +107,16 @@ export function registerMeRoutes(app: FastifyInstance): void {
     // same transaction (exactly one other row per tx_uuid -- self-payment is
     // structurally impossible, CLAUDE.md §5). LEFT JOIN transfers so seeded
     // or legacy rows with no reference still render, just with a null one.
+    // LEFT JOIN billers on the counterparty's account_id so a bill payment's
+    // counterparty (which IS just an accounts row, see 018_billers.cjs) is
+    // additionally flagged as one -- lets the mobile client render a bill
+    // category icon instead of the generic person avatar.
     let query = db
       .selectFrom("journal as j")
       .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
       .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
       .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
+      .leftJoin("billers as bl", "bl.account_id", "o.account_id")
       .select([
         "j.id as id",
         "j.tx_uuid as tx_uuid",
@@ -102,6 +126,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
         "counterparty.display_name as counterparty_name",
         "counterparty.rib as counterparty_rib",
         "t.reference as reference",
+        "bl.category as biller_category",
       ])
       .where("j.account_id", "=", accountId)
       .orderBy("j.created_at", "desc")
@@ -109,7 +134,7 @@ export function registerMeRoutes(app: FastifyInstance): void {
       .limit(limit + 1);
 
     if (cursor) {
-      const { createdAt, id } = cursor;
+      const { createdAt, tiebreak: id } = cursor;
       query = query.where((eb) =>
         eb.or([eb("j.created_at", "<", createdAt), eb.and([eb("j.created_at", "=", createdAt), eb("j.id", "<", id)])]),
       );
@@ -130,8 +155,174 @@ export function registerMeRoutes(app: FastifyInstance): void {
         counterparty_rib: r.counterparty_rib,
         reference: r.reference,
         created_at: r.created_at.toISOString(),
+        is_biller: r.biller_category !== null,
+        biller_category: r.biller_category,
       })),
-      next_cursor: hasMore && last ? encodeCursor(last.created_at, last.id) : null,
+      next_cursor: hasMore && last ? cursorCodec.encode(last.created_at, last.id) : null,
+    });
+  });
+
+  // Ship List v2 -- a customer's own data, in one authenticated, self-
+  // scoped response: derisks a data-protection-law conversation (Morocco's
+  // Law 09-08, GDPR-equivalent right-of-access) at near-zero cost, since
+  // every underlying query already exists elsewhere in this file/
+  // billPayments.ts -- this just bundles them. Audit-logged like every
+  // other sensitive action (server/src/audit/log.ts).
+  app.get("/me/data-export", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const { aid: accountId, sub: userId, cid: customerId } = request.user;
+
+    const [account, transactions, billPayments, beneficiaries] = await Promise.all([
+      db.selectFrom("accounts").select(["display_name", "rib", "currency", "created_at"]).where("account_id", "=", accountId).executeTakeFirst(),
+      db
+        .selectFrom("journal as j")
+        .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
+        .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+        .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
+        .select([
+          "j.tx_uuid as tx_uuid",
+          "j.amount as amount",
+          "j.currency as currency",
+          "j.created_at as created_at",
+          "counterparty.display_name as counterparty_name",
+          "counterparty.rib as counterparty_rib",
+          "t.reference as reference",
+        ])
+        .where("j.account_id", "=", accountId)
+        .orderBy("j.created_at", "desc")
+        .limit(DATA_EXPORT_ROW_CAP)
+        .execute(),
+      db
+        .selectFrom("bill_payments as bp")
+        .innerJoin("billers as b", "b.id", "bp.biller_id")
+        .innerJoin("transfers as t", "t.tx_uuid", "bp.tx_uuid")
+        .select(["bp.tx_uuid as tx_uuid", "b.name as biller_name", "bp.subscriber_reference as subscriber_reference", "t.amount as amount", "t.currency as currency", "bp.created_at as created_at"])
+        .where("bp.account_id", "=", accountId)
+        .orderBy("bp.created_at", "desc")
+        .limit(DATA_EXPORT_ROW_CAP)
+        .execute(),
+      db.selectFrom("beneficiaries").select(["display_name", "rib", "created_at"]).where("owner_user_id", "=", userId).execute(),
+    ]);
+
+    if (!account) {
+      return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
+    }
+
+    await recordAudit({ userId, action: "data_export.request", resourceType: "account", ip: request.ip });
+
+    return reply.send({
+      exported_at: new Date().toISOString(),
+      profile: {
+        customer_id: customerId,
+        display_name: account.display_name,
+        account_id: accountId,
+        rib: account.rib,
+        currency: account.currency,
+        account_created_at: account.created_at.toISOString(),
+      },
+      transactions: transactions.map((r) => ({
+        tx_uuid: r.tx_uuid,
+        direction: r.amount < 0n ? "debit" : "credit",
+        amount: (r.amount < 0n ? -r.amount : r.amount).toString(),
+        currency: r.currency,
+        counterparty_name: r.counterparty_name,
+        counterparty_rib: r.counterparty_rib,
+        reference: r.reference,
+        created_at: r.created_at.toISOString(),
+      })),
+      bill_payments: billPayments.map((r) => ({
+        tx_uuid: r.tx_uuid,
+        biller_name: r.biller_name,
+        subscriber_reference: r.subscriber_reference,
+        amount: r.amount.toString(),
+        currency: r.currency,
+        created_at: r.created_at.toISOString(),
+      })),
+      beneficiaries: beneficiaries.map((b) => ({
+        display_name: b.display_name,
+        rib: b.rib,
+        created_at: b.created_at.toISOString(),
+      })),
+    });
+  });
+
+  // Ship List v2's owner-requested statement export -- a date-ranged,
+  // itemized view with opening/closing balance, the shape a real bank
+  // statement (and the mobile PDF built from this response) needs. `to` is
+  // treated as inclusive through end-of-day, matching how a customer picks
+  // a calendar date range, not an exact instant.
+  app.get("/accounts/me/statement", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const { aid: accountId, cid: customerId } = request.user;
+    const parsed = statementQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const { from, to } = parsed.data;
+    const fromDate = new Date(`${from}T00:00:00.000Z`);
+    const toDateExclusive = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000);
+
+    const account = await db
+      .selectFrom("accounts")
+      .select(["display_name", "rib", "currency"])
+      .where("account_id", "=", accountId)
+      .executeTakeFirst();
+    if (!account || !account.rib || !account.display_name) {
+      return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
+    }
+
+    const [openingRow, rangeRows] = await Promise.all([
+      db
+        .selectFrom("journal")
+        .select((eb) => eb.fn.sum<bigint>("amount").as("total"))
+        .where("account_id", "=", accountId)
+        .where("currency", "=", account.currency)
+        .where("created_at", "<", fromDate)
+        .executeTakeFirst(),
+      db
+        .selectFrom("journal as j")
+        .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
+        .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
+        .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
+        .select([
+          "j.tx_uuid as tx_uuid",
+          "j.amount as amount",
+          "j.currency as currency",
+          "j.created_at as created_at",
+          "counterparty.display_name as counterparty_name",
+          "counterparty.rib as counterparty_rib",
+          "t.reference as reference",
+        ])
+        .where("j.account_id", "=", accountId)
+        .where("j.created_at", ">=", fromDate)
+        .where("j.created_at", "<", toDateExclusive)
+        .orderBy("j.created_at", "asc")
+        .limit(STATEMENT_ROW_CAP)
+        .execute(),
+    ]);
+
+    const openingBalance = openingRow?.total ?? 0n;
+    const closingBalance = rangeRows.reduce((sum, r) => sum + r.amount, openingBalance);
+
+    await recordAudit({ userId: request.user.sub, action: "statement.request", resourceType: "account", ip: request.ip });
+
+    return reply.send({
+      customer_id: customerId,
+      display_name: account.display_name,
+      rib: account.rib,
+      currency: account.currency,
+      from,
+      to,
+      opening_balance: openingBalance.toString(),
+      closing_balance: closingBalance.toString(),
+      transactions: rangeRows.map((r) => ({
+        tx_uuid: r.tx_uuid,
+        direction: r.amount < 0n ? "debit" : "credit",
+        amount: (r.amount < 0n ? -r.amount : r.amount).toString(),
+        currency: r.currency,
+        counterparty_name: r.counterparty_name,
+        counterparty_rib: r.counterparty_rib,
+        reference: r.reference,
+        created_at: r.created_at.toISOString(),
+      })),
     });
   });
 }

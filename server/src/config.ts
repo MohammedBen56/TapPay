@@ -106,25 +106,38 @@ export const config = {
    * mid-rollout -- see docs/THREAT_MODEL.md's role-separation row. */
   appDatabaseUrl: process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgres://tappay:tappay@localhost:5433/tappay",
 
-  /** Postgres connection pool bounds (db/kysely.ts's createDb). Deliberately
-   * modest, not maximized: every balance-affecting WRITE serializes on a
-   * row-locked `accounts` row (locking.ts), so a larger pool doesn't raise
-   * write throughput -- it just moves the queue from the pool into the lock
-   * and lengthens tail latency instead of shortening it. Sized against
-   * Postgres's own default max_connections (100), leaving headroom for
-   * other app instances, the sweeper, and manual/migration connections.
+  /** Postgres connection pool bounds (db/kysely.ts's createDb). The
+   * write-path reasoning that originally kept this modest still holds:
+   * every balance-affecting WRITE serializes on a row-locked `accounts`
+   * row (locking.ts), so a bigger pool doesn't raise write throughput --
+   * writes queue on the lock either way, a bigger pool just means they
+   * queue less on the POOL first, which is a pure win, not a wash.
    *
-   * That reasoning does NOT extend to pure reads (GET /me, /accounts/me/
-   * balance, /accounts/me/transactions) -- they never touch a row lock, so
-   * a bigger pool genuinely would let more of them run concurrently instead
-   * of queueing. ops/BENCHMARK.md's 2026-08-19 load test found exactly this:
-   * p50 stayed ~5ms while p95 rose to ~712ms under 100 concurrent read-only
-   * VUs, the signature of queueing for one of only 10 connections shared
-   * with the (deliberately throttled) write path. Not raised here --
-   * capacity tradeoffs against max_connections are a real decision, not a
-   * bug fix -- but a future capacity call should read that benchmark
-   * first, not just this comment's write-path-only rationale. */
-  dbPoolMax: envInt("DB_POOL_MAX", 10),
+   * Raised from 10 to 30 (Ship List v2, 2026-08-20) specifically because
+   * that write-path reasoning never justified capping the READ path at
+   * the same number -- GET /me, /accounts/me/balance,
+   * /accounts/me/transactions, /billers, /bill-payments never touch a row
+   * lock at all. ops/BENCHMARK.md's 2026-08-19 load test found exactly
+   * this: p50 stayed ~5ms while p95 rose to ~712ms (crossing the 300ms
+   * target) under 100 concurrent read-only VUs -- the signature of
+   * queueing for one of only 10 shared connections, not slow queries.
+   * 30 is sized against Postgres's own default max_connections (100),
+   * this being a single app instance today: 30 leaves 70 connections of
+   * headroom for pgAdmin, ad-hoc psql, one-off migration/seed runs, and
+   * Grafana/Prometheus (which only scrape GET /metrics over HTTP, never
+   * connect to Postgres directly, so they cost nothing here). Re-run
+   * ops/BENCHMARK.md's exact load test after any further change to this
+   * value -- the benchmark script and thresholds already exist
+   * specifically to make that re-verification cheap. A true read/write
+   * pool split (a second Kysely instance for read-only routes) was
+   * considered and deliberately not done in this pass -- it would touch
+   * every read-only route's import, real surgery for a win this single
+   * shared-pool raise already captures at this app's current scale;
+   * revisit if a future benchmark run at a larger VU count shows the
+   * write path itself contending with reads for pool slots, which this
+   * run did not (write_path never returned a 500/timeout, only clean
+   * 200s and typed 429s). */
+  dbPoolMax: envInt("DB_POOL_MAX", 30),
   dbPoolConnectionTimeoutMs: envInt("DB_POOL_CONNECTION_TIMEOUT_MS", 5_000),
   dbPoolIdleTimeoutMs: envInt("DB_POOL_IDLE_TIMEOUT_MS", 30_000),
 
@@ -282,6 +295,11 @@ export const config = {
    * budget (no retry-exemption logic is implemented), so the number needs
    * headroom for a few retries, not just genuine distinct transfers. */
   rateLimitTransfersMax: envInt("RATE_LIMIT_TRANSFERS_MAX", 30),
+
+  /** POST /bill-payments -- same reasoning/keying as rateLimitTransfersMax
+   * (request.user.aid, not IP), kept as its own knob rather than reused so
+   * the two surfaces can be tuned independently later. */
+  rateLimitBillPaymentsMax: envInt("RATE_LIMIT_BILL_PAYMENTS_MAX", 30),
 
   /** Backs @fastify/rate-limit's Redis store (docker-compose.yml's `redis`
    * service) -- see its own comment for why this is safe to lose on

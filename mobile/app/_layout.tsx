@@ -49,6 +49,72 @@ function RootNavigator(): React.JSX.Element | null {
             presentation: "card",
           }}
         />
+        <Stack.Screen
+          name="bills/index"
+          options={{
+            headerShown: true,
+            headerTitle: "Pay a bill",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="bills/[billerId]"
+          options={{
+            headerShown: true,
+            headerTitle: "Pay bill",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="settings/index"
+          options={{
+            headerShown: true,
+            headerTitle: "Settings",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="settings/change-password"
+          options={{
+            headerShown: true,
+            headerTitle: "Change password",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="settings/sessions"
+          options={{
+            headerShown: true,
+            headerTitle: "Devices",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="statements/index"
+          options={{
+            headerShown: true,
+            headerTitle: "Statements & letters",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
       </Stack.Protected>
       <Stack.Protected guard={status === "signedOut" || status === "awaitingBiometricPrompt" || status === "locked"}>
         <Stack.Screen name="sign-in" />

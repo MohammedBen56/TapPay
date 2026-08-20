@@ -1,8 +1,31 @@
-import { useEffect } from "react";
-import { StyleSheet, View, type ViewStyle } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, StyleSheet, View, type ViewStyle } from "react-native";
 import Animated, { Easing, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../design/tokens";
+
+/** Ship List v2: the continuous ambient blob drift had no reduced-motion
+ * handling at all -- a real accessibility failure class (unstoppable
+ * motion can trigger vestibular symptoms), not just a nicety. Checked once
+ * on mount and kept live via the OS event, same as any other
+ * accessibility setting that can change while the app is running. */
+function useReducedMotionEnabled(): boolean {
+  const [reduced, setReduced] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((value) => {
+      if (mounted) setReduced(value);
+    });
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduced);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return reduced;
+}
 
 /**
  * The Argent ground every screen sits on: a flat near-black fill with four
@@ -22,6 +45,9 @@ import { colors } from "../design/tokens";
  * fewer blobs if it's still not holding 60fps. Same rule that vetoed Skia
  * elsewhere in this app applies here: do not ship a janky background.
  */
+// Also gated on the OS reduce-motion accessibility setting (see
+// useReducedMotionEnabled below) -- this flag is the manual dev
+// kill-switch on top of that, not instead of it.
 const ANIMATE_BLOBS = true;
 const BLOB_FIELD_OPACITY = 0.6;
 
@@ -45,15 +71,15 @@ const BLOBS: Blob[] = [
   { color: colors.blobSand, size: 420, bottom: -110, right: -90, dx: -50, dy: -70, scale: 1.12, ms: 29000 },
 ];
 
-function BlobLayer({ blob }: { blob: Blob }): React.JSX.Element {
+function BlobLayer({ blob, animate }: { blob: Blob; animate: boolean }): React.JSX.Element {
   const p = useSharedValue(0);
 
   useEffect(() => {
-    if (ANIMATE_BLOBS) {
+    if (animate) {
       p.value = withRepeat(withTiming(1, { duration: blob.ms, easing: Easing.inOut(Easing.ease) }), -1, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [animate]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -96,12 +122,14 @@ function BlobLayer({ blob }: { blob: Blob }): React.JSX.Element {
 
 export function ScreenBackground({ children, style }: { children?: React.ReactNode; style?: ViewStyle }): React.JSX.Element {
   const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotionEnabled();
+  const animate = ANIMATE_BLOBS && !reducedMotion;
 
   return (
     <View style={styles.ground}>
       <View style={styles.blobField} pointerEvents="none">
         {BLOBS.map((blob, i) => (
-          <BlobLayer key={i} blob={blob} />
+          <BlobLayer key={i} blob={blob} animate={animate} />
         ))}
       </View>
       <View style={[styles.content, { paddingTop: insets.top, paddingBottom: insets.bottom }, style]}>{children}</View>

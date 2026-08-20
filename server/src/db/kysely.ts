@@ -140,6 +140,47 @@ export interface TransfersTable {
   created_at: Generated<Date>;
 }
 
+export type BillerCategory = "electricity" | "water" | "internet";
+
+/** Bill payments (018_billers.cjs): a mock biller catalog. Each biller is
+ * also an ordinary AccountsTable row (account_id here), exactly like the
+ * mint account -- paying a bill is structurally a normal transfer. */
+export interface BillersTable {
+  id: Generated<string>;
+  account_id: string;
+  category: BillerCategory;
+  name: string;
+  is_active: Generated<boolean>;
+  created_at: Generated<Date>;
+}
+
+/** 019_bill_payments.cjs: one row per settled bill payment, written by the
+ * route as a second statement after a successful bankAdapter.transfer()
+ * call -- see that migration's own comment for why amount/currency aren't
+ * duplicated here the way transfers duplicates journal's amount. */
+export interface BillPaymentsTable {
+  tx_uuid: string;
+  account_id: string;
+  biller_id: string;
+  subscriber_reference: string;
+  created_at: Generated<Date>;
+}
+
+/** Ship List v2 (021_audit_log.cjs): a request-level "who did what, when"
+ * trail -- separate from and additional to journal/transfers, which
+ * record what money moved. See the migration's own comment for why
+ * user_id is nullable and why this exists alongside, not instead of,
+ * logging.ts's deliberately PII-excluding request logger. */
+export interface AuditLogTable {
+  id: Generated<bigint>;
+  user_id: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  ip: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   accounts: AccountsTable;
   devices: DevicesTable;
@@ -150,6 +191,9 @@ export interface Database {
   auth_sessions: AuthSessionsTable;
   beneficiaries: BeneficiariesTable;
   transfers: TransfersTable;
+  billers: BillersTable;
+  bill_payments: BillPaymentsTable;
+  audit_log: AuditLogTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

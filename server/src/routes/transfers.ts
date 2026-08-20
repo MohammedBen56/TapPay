@@ -2,9 +2,11 @@ import { isValidRib } from "@tappay/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { bankAdapter } from "../adapters/index.js";
+import { recordAudit } from "../audit/log.js";
 import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 import { transferTotal } from "../metrics.js";
+import { accountScopedRateLimitedPreHandlers, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
 // Reject C0 control characters, NFC-normalize -- the reference is rendered
 // directly in transaction history/receipts on both sides of a transfer.
@@ -30,28 +32,9 @@ const transferBodySchema = z
   });
 
 export function registerTransferRoutes(app: FastifyInstance): void {
-  // app.rateLimit(...) as an explicit preHandler, placed AFTER
-  // app.authenticate, rather than the config.rateLimit object style other
-  // routes use (auth.ts, lookup.ts) -- this route's limit needs
-  // request.user.aid, which only exists once authenticate has already run.
-  // An explicit array gives certain ordering; config.rateLimit's own `hook`
-  // option to reach the same effect relies on the plugin's onRoute-time
-  // wiring interacting correctly with a separately-declared preHandler,
-  // which is one more moving part than this needs. Closes D7 (CLAUDE.md
-  // §11). Guarded by hasDecorator: buildApp({ rateLimit: false }) (every
-  // existing test file, to avoid tripping the tight per-route limits during
-  // rapid test requests) never registers the rate-limit plugin at all, so
-  // app.rateLimit itself wouldn't exist to call.
-  const transferPreHandlers = app.hasDecorator("rateLimit")
-    ? [
-        app.authenticate,
-        app.rateLimit({
-          max: config.rateLimitTransfersMax,
-          timeWindow: "1 minute",
-          keyGenerator: (request) => request.user.aid,
-        }),
-      ]
-    : [app.authenticate];
+  // Closes D7 (CLAUDE.md §11) -- see settlementRouteHelpers.ts's own doc
+  // comment for why this needs to be an explicit ordered array.
+  const transferPreHandlers = accountScopedRateLimitedPreHandlers(app, config.rateLimitTransfersMax);
 
   app.post(
     "/transfers",
@@ -108,22 +91,10 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       const result = await bankAdapter.transfer(tx_uuid, fromAccountId, recipient.account_id, amountMinor, currency, { reference });
 
       if (!result.success) {
-        // tx_uuid_conflict is a security tripwire (metrics.ts's own comment) --
-        // its rate should be flat zero; a nonzero rate here means someone
-        // attempted a settlement-slot hijack (CLAUDE.md §5), not a normal
-        // failure a user just retried past.
-        if (result.failureReason === "tx_uuid_conflict") {
-          transferTotal.inc({ outcome: "tx_uuid_conflict" });
-          return reply.status(409).send({ error: "TxUuidConflict", message: "tx_uuid is already in use by a different transaction" });
-        }
-        if (result.failureReason === "reservation_expired") {
-          transferTotal.inc({ outcome: "reservation_expired" });
-          return reply.status(409).send({ error: "ReservationExpired", message: result.failureReason });
-        }
-        transferTotal.inc({ outcome: "insufficient_funds" });
-        return reply.status(409).send({ error: "InsufficientFunds", message: result.failureReason });
+        return sendSettlementFailure(reply, result, transferTotal);
       }
       transferTotal.inc({ outcome: "settled" });
+      await recordAudit({ userId, action: "transfer.settle", resourceType: "transfer", resourceId: tx_uuid, ip: request.ip });
 
       const [balance, counterparty] = await Promise.all([
         bankAdapter.getAvailableBalance(fromAccountId, currency),
@@ -157,6 +128,7 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       .innerJoin("journal as o", (join) => join.onRef("o.tx_uuid", "=", "j.tx_uuid").on("o.account_id", "!=", accountId))
       .leftJoin("accounts as counterparty", "counterparty.account_id", "o.account_id")
       .leftJoin("transfers as t", "t.tx_uuid", "j.tx_uuid")
+      .leftJoin("billers as bl", "bl.account_id", "o.account_id")
       .select([
         "j.tx_uuid as tx_uuid",
         "j.amount as amount",
@@ -165,6 +137,7 @@ export function registerTransferRoutes(app: FastifyInstance): void {
         "counterparty.display_name as counterparty_name",
         "counterparty.rib as counterparty_rib",
         "t.reference as reference",
+        "bl.category as biller_category",
       ])
       .where("j.account_id", "=", accountId)
       .where("j.tx_uuid", "=", txUuid)
@@ -183,6 +156,8 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       counterparty_rib: row.counterparty_rib,
       reference: row.reference,
       created_at: row.created_at.toISOString(),
+      is_biller: row.biller_category !== null,
+      biller_category: row.biller_category,
     });
   });
 }

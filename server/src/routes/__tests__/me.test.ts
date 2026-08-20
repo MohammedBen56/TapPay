@@ -129,6 +129,128 @@ describe("GET /accounts/me/transactions", () => {
   });
 });
 
+describe("GET /accounts/me/statement", () => {
+  const app = buildApp({ rateLimit: false });
+
+  function isoDate(d: Date): string {
+    return d.toISOString().slice(0, 10);
+  }
+
+  it("returns opening/closing balance and transactions within a date range covering now", async () => {
+    const [alice, bob] = await Promise.all([
+      createTestCustomer(app, { startingBalance: 10_000n }),
+      createTestCustomer(app),
+    ]);
+    const txUuid = randomUUID();
+    await app.inject({
+      method: "POST",
+      url: "/transfers",
+      headers: authHeader(alice),
+      payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "1500", currency: "MAD", reference: "statement test" },
+    });
+
+    const from = isoDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const to = isoDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const response = await app.inject({
+      method: "GET",
+      url: `/accounts/me/statement?from=${from}&to=${to}`,
+      headers: authHeader(alice),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.opening_balance).toBe("0");
+    expect(body.closing_balance).toBe("8500");
+    expect(body.transactions.some((t: { tx_uuid: string }) => t.tx_uuid === txUuid)).toBe(true);
+  });
+
+  it("a range entirely before the account existed returns zero balances and no transactions", async () => {
+    const alice = await createTestCustomer(app, { startingBalance: 10_000n });
+    const response = await app.inject({
+      method: "GET",
+      url: "/accounts/me/statement?from=2000-01-01&to=2000-01-31",
+      headers: authHeader(alice),
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.opening_balance).toBe("0");
+    expect(body.closing_balance).toBe("0");
+    expect(body.transactions).toEqual([]);
+  });
+
+  it("rejects a malformed date and a from-after-to range", async () => {
+    const alice = await createTestCustomer(app);
+    const malformed = await app.inject({
+      method: "GET",
+      url: "/accounts/me/statement?from=not-a-date&to=2026-01-01",
+      headers: authHeader(alice),
+    });
+    expect(malformed.statusCode).toBe(400);
+
+    const inverted = await app.inject({
+      method: "GET",
+      url: "/accounts/me/statement?from=2026-06-01&to=2026-01-01",
+      headers: authHeader(alice),
+    });
+    expect(inverted.statusCode).toBe(400);
+  });
+
+  it("requires a valid access token", async () => {
+    const response = await app.inject({ method: "GET", url: "/accounts/me/statement?from=2026-01-01&to=2026-01-31" });
+    expect(response.statusCode).toBe(401);
+  });
+});
+
+describe("GET /me/data-export", () => {
+  const app = buildApp({ rateLimit: false });
+
+  it("bundles the caller's own profile, transactions, and beneficiaries", async () => {
+    const [alice, bob] = await Promise.all([createTestCustomer(app, { startingBalance: 10_000n }), createTestCustomer(app)]);
+    const txUuid = randomUUID();
+    await app.inject({
+      method: "POST",
+      url: "/transfers",
+      headers: authHeader(alice),
+      payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "500", currency: "MAD", reference: "export test" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/beneficiaries",
+      headers: authHeader(alice),
+      payload: { display_name: "Bob", rib: bob.rib },
+    });
+
+    const response = await app.inject({ method: "GET", url: "/me/data-export", headers: authHeader(alice) });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+
+    expect(body.profile).toMatchObject({ customer_id: alice.customerId, rib: alice.rib });
+    expect(body.transactions.some((t: { tx_uuid: string }) => t.tx_uuid === txUuid)).toBe(true);
+    expect(body.beneficiaries.some((b: { rib: string }) => b.rib === bob.rib)).toBe(true);
+    expect(body.bill_payments).toEqual([]);
+  });
+
+  it("never includes another customer's data", async () => {
+    const [alice, bob] = await Promise.all([createTestCustomer(app, { startingBalance: 10_000n }), createTestCustomer(app)]);
+    await app.inject({
+      method: "POST",
+      url: "/beneficiaries",
+      headers: authHeader(bob),
+      payload: { display_name: "Alice", rib: alice.rib },
+    });
+
+    const response = await app.inject({ method: "GET", url: "/me/data-export", headers: authHeader(alice) });
+    const body = response.json();
+    expect(body.profile.customer_id).toBe(alice.customerId);
+    expect(body.beneficiaries).toHaveLength(0);
+  });
+
+  it("requires a valid access token", async () => {
+    const response = await app.inject({ method: "GET", url: "/me/data-export" });
+    expect(response.statusCode).toBe(401);
+  });
+});
+
 afterAll(async () => {
   await db.destroy();
 });

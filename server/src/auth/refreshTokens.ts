@@ -50,12 +50,7 @@ export async function rotateRefreshToken(presentedToken: string): Promise<Refres
 
   if (row.revoked_at) {
     if (row.replaced_by) {
-      await db
-        .updateTable("auth_sessions")
-        .set({ revoked_at: new Date() })
-        .where("family_id", "=", row.family_id)
-        .where("revoked_at", "is", null)
-        .execute();
+      await revokeFamily(row.family_id);
       return { outcome: "reused_after_rotation" };
     }
     // Revoked with no replacement -- e.g. a prior logout. Not a theft
@@ -81,6 +76,60 @@ export async function revokeRefreshToken(presentedToken: string): Promise<void> 
     .updateTable("auth_sessions")
     .set({ revoked_at: new Date() })
     .where("token_hash", "=", tokenHash)
+    .where("revoked_at", "is", null)
+    .execute();
+}
+
+/** Revokes every not-yet-revoked row in a rotation family in one shot --
+ * the same logic rotateRefreshToken's theft-detection branch already used
+ * inline, now shared with routes/auth.ts's explicit "log out this
+ * session/device" (Ship List v2) and revokeAllSessionsForUser below.
+ * Idempotent: a family with nothing left to revoke is a harmless no-op. */
+export async function revokeFamily(familyId: string): Promise<void> {
+  await db
+    .updateTable("auth_sessions")
+    .set({ revoked_at: new Date() })
+    .where("family_id", "=", familyId)
+    .where("revoked_at", "is", null)
+    .execute();
+}
+
+/** Every active session (one row per family, since a family's older,
+ * already-rotated-away rows already carry their own revoked_at) for a
+ * user, oldest first. Ship List v2's session/device management --
+ * GET /auth/sessions lists these; DELETE /auth/sessions/:id revokes one
+ * family via revokeFamily above after an ownership check in the route. */
+export interface ActiveSession {
+  id: string;
+  familyId: string;
+  issuedAt: Date;
+  expiresAt: Date;
+}
+
+export async function listActiveSessions(userId: string): Promise<ActiveSession[]> {
+  const rows = await db
+    .selectFrom("auth_sessions")
+    .select(["id", "family_id", "issued_at", "expires_at"])
+    .where("user_id", "=", userId)
+    .where("revoked_at", "is", null)
+    .where("expires_at", ">", new Date())
+    .orderBy("issued_at", "asc")
+    .execute();
+  return rows.map((r) => ({ id: r.id, familyId: r.family_id, issuedAt: r.issued_at, expiresAt: r.expires_at }));
+}
+
+/** Used by change-password (Ship List v2): rotating a credential is the
+ * one case where every active session -- not just one family -- should be
+ * invalidated, on the assumption that a password change may be in
+ * response to a suspected compromise. Simpler and safer than trying to
+ * spare "the session that just made this request": the access token
+ * carries no session/family id to spare correctly, and guessing wrong
+ * would leave a potentially-compromised session alive. */
+export async function revokeAllSessionsForUser(userId: string): Promise<void> {
+  await db
+    .updateTable("auth_sessions")
+    .set({ revoked_at: new Date() })
+    .where("user_id", "=", userId)
     .where("revoked_at", "is", null)
     .execute();
 }

@@ -6,7 +6,7 @@
  * all but the first to fail with InvalidRefreshToken). */
 import type { ApiErrorBody, RefreshResponse } from "@tappay/shared";
 import { SERVER_BASE_URL } from "../config/serverUrl";
-import { getTokens, setTokens } from "../auth/tokenStore";
+import { getTokens, notifySessionExpired, setTokens } from "../auth/tokenStore";
 
 export class ApiError extends Error {
   constructor(
@@ -35,6 +35,7 @@ async function refreshAccessToken(): Promise<string | null> {
         });
         if (!res.ok) {
           setTokens(null);
+          notifySessionExpired();
           return null;
         }
         const body = (await res.json()) as RefreshResponse;

@@ -15,7 +15,7 @@ import {
   saveDisplayName,
   saveRefreshTokenForBiometric,
 } from "./secureStore";
-import { getTokens, setTokens } from "./tokenStore";
+import { getTokens, setSessionExpiredHandler, setTokens } from "./tokenStore";
 
 // "awaitingBiometricPrompt" sits between a successful password login and
 // full access: it's the interstitial where the sign-in screen offers "Enable
@@ -47,6 +47,7 @@ interface AuthContextValue {
   loginWithPassword: (customerId: string, password: string) => Promise<boolean>;
   loginWithBiometric: () => Promise<boolean>;
   enableBiometric: () => Promise<boolean>;
+  disableBiometric: () => Promise<void>;
   /** Dismisses the post-login biometric-enrollment interstitial (whether or
    * not the user chose to enable it) and grants full access. */
   finishBiometricPrompt: () => void;
@@ -202,6 +203,16 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     }
   }, []);
 
+  // Ship List v2 -- the Settings screen's biometric toggle turning off.
+  // Mirrors enableBiometric's state update in the other direction; without
+  // this, clearing the secure-store entry alone would leave `biometricEnabled`
+  // stale (true) in React state, and sign-in.tsx would still offer a
+  // biometric-login path that's already been cleared underneath it.
+  const disableBiometric = useCallback(async (): Promise<void> => {
+    await clearBiometricRefreshToken();
+    setBiometricEnabled(false);
+  }, []);
+
   const finishBiometricPrompt = useCallback((): void => {
     setStatus("signedIn");
   }, []);
@@ -222,6 +233,27 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setStatus("signedOut");
   }, []);
 
+  // Ship List v2: client.ts's refresh-and-retry calls this when a refresh
+  // definitively fails -- the session was revoked server-side (the user
+  // revoked it themselves from "Manage devices", or a password change
+  // elsewhere revoked every session) or expired. Mirrors logout()'s local
+  // cleanup, minus the api.logout() call: the server already knows this
+  // session is gone, calling it again would just be another failed
+  // request. Without this, `status` would stay "signedIn" while every
+  // subsequent request silently 401'd with nothing driving the user back
+  // to sign-in.
+  useEffect(() => {
+    const handleSessionExpired = (): void => {
+      setTokens(null);
+      setAccount(null);
+      void clearBiometricRefreshToken();
+      setBiometricEnabled(false);
+      setStatus("signedOut");
+    };
+    setSessionExpiredHandler(handleSessionExpired);
+    return () => setSessionExpiredHandler(null);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -234,6 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
       loginWithPassword,
       loginWithBiometric,
       enableBiometric,
+      disableBiometric,
       finishBiometricPrompt,
       logout,
       refreshAccount,
@@ -249,6 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
       loginWithPassword,
       loginWithBiometric,
       enableBiometric,
+      disableBiometric,
       finishBiometricPrompt,
       logout,
       refreshAccount,

@@ -1,6 +1,7 @@
 import { isValidRib } from "@tappay/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { recordAudit } from "../audit/log.js";
 import { db } from "../db/kysely.js";
 
 const createBodySchema = z.object({
@@ -52,6 +53,7 @@ export function registerBeneficiaryRoutes(app: FastifyInstance): void {
         .values({ owner_user_id: userId, display_name, rib })
         .returning(["id"])
         .executeTakeFirstOrThrow();
+      await recordAudit({ userId, action: "beneficiary.create", resourceType: "beneficiary", resourceId: row.id, ip: request.ip });
       return reply.status(201).send({ id: row.id, display_name, rib });
     } catch (err) {
       // UNIQUE (owner_user_id, rib) -- Postgres unique_violation.
@@ -103,6 +105,7 @@ export function registerBeneficiaryRoutes(app: FastifyInstance): void {
     if (deleted.numDeletedRows === 0n) {
       return reply.status(404).send({ error: "NotFound", message: "beneficiary not found" });
     }
+    await recordAudit({ userId, action: "beneficiary.delete", resourceType: "beneficiary", resourceId: id, ip: request.ip });
     return reply.status(204).send();
   });
 }
