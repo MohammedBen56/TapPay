@@ -7,7 +7,7 @@ import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 import { transferTotal } from "../metrics.js";
 import { resolveOwnedAccount } from "./accountSelection.js";
-import { accountScopedRateLimitedPreHandlers, sendSettlementFailure } from "./settlementRouteHelpers.js";
+import { accountScopedRateLimitedPreHandlers, echoIdempotencyKey, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
 // Reject C0 control characters, NFC-normalize -- the reference is rendered
 // directly in transaction history/receipts on both sides of a transfer.
@@ -19,7 +19,7 @@ const referenceSchema = z
   .refine((s) => ![...s].some((c) => c.charCodeAt(0) < 0x20), { message: "reference must not contain control characters" })
   .transform((s) => s.normalize("NFC"));
 
-const transferBodySchema = z
+export const transferBodySchema = z
   .object({
     tx_uuid: z.string().uuid(),
     to_rib: z.string().optional(),
@@ -106,6 +106,7 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       }
       transferTotal.inc({ outcome: "settled" });
       await recordAudit({ userId, action: "transfer.settle", resourceType: "transfer", resourceId: tx_uuid, ip: request.ip });
+      echoIdempotencyKey(request, reply, tx_uuid);
 
       const [balance, counterparty] = await Promise.all([
         bankAdapter.getAvailableBalance(fromAccountId, currency),

@@ -9,7 +9,7 @@ import { db } from "../db/kysely.js";
 // `savings` is the only client-choosable account_type -- `checking` always
 // exists already (provisioned at signup, seed.ts/the parked enroll flow),
 // so there is no "open a checking account" action for a client to invoke.
-const openAccountBodySchema = z.object({ account_type: z.literal("savings") });
+export const openAccountBodySchema = z.object({ account_type: z.literal("savings") });
 
 /** Same randomness shape as v2TestHelpers.ts's randomBranchAndAccount() and
  * seed.ts's demo RIBs -- a fresh 3-digit branch + 16-digit account number,

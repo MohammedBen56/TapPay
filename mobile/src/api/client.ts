@@ -8,6 +8,12 @@ import type { ApiErrorBody, RefreshResponse } from "@tappay/shared";
 import { SERVER_BASE_URL } from "../config/serverUrl";
 import { getTokens, notifySessionExpired, setTokens } from "../auth/tokenStore";
 
+// Ship List v2 Wave 2 Phase 3: the live v2 API moved under /v1 (server/src/
+// app.ts) -- /health*/metrics stay unprefixed, but this app never calls
+// those directly (confirmed), so every apiRequest()/refresh call gets the
+// prefix unconditionally.
+const API_BASE_URL = `${SERVER_BASE_URL}/v1`;
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -28,7 +34,7 @@ async function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
-        const res = await fetch(`${SERVER_BASE_URL}/auth/refresh`, {
+        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ refresh_token: tokens.refreshToken }),
@@ -63,7 +69,7 @@ async function doFetch(path: string, options: ApiRequestOptions, accessToken: st
   if (options.auth !== false && accessToken) {
     headers.authorization = `Bearer ${accessToken}`;
   }
-  return fetch(`${SERVER_BASE_URL}${path}`, {
+  return fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,

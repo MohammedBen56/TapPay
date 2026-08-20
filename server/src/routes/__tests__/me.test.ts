@@ -10,7 +10,7 @@ describe("GET /me", () => {
   it("returns the authenticated customer's profile, including a derived IBAN", async () => {
     const session = await createTestCustomer(app, { displayName: "Yasmine Idrissi" });
 
-    const response = await app.inject({ method: "GET", url: "/me", headers: authHeader(session) });
+    const response = await app.inject({ method: "GET", url: "/v1/me", headers: authHeader(session) });
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -25,7 +25,7 @@ describe("GET /me", () => {
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/me" });
+    const response = await app.inject({ method: "GET", url: "/v1/me" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -35,13 +35,13 @@ describe("GET /accounts/me/balance", () => {
 
   it("returns the caller's own balance, scoped from the token, not any account id in the request", async () => {
     const session = await createTestCustomer(app, { startingBalance: 5_000n });
-    const response = await app.inject({ method: "GET", url: "/accounts/me/balance", headers: authHeader(session) });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts/me/balance", headers: authHeader(session) });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ account_id: session.accountId, currency: "MAD", available_balance: "5000" });
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/accounts/me/balance" });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts/me/balance" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -57,13 +57,13 @@ describe("GET /accounts/me/transactions", () => {
 
     await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: bob.rib, amount: "1000", currency: "MAD", reference: "Loyer" },
     });
 
-    const aliceHistory = await app.inject({ method: "GET", url: "/accounts/me/transactions", headers: authHeader(alice) });
-    const bobHistory = await app.inject({ method: "GET", url: "/accounts/me/transactions", headers: authHeader(bob) });
+    const aliceHistory = await app.inject({ method: "GET", url: "/v1/accounts/me/transactions", headers: authHeader(alice) });
+    const bobHistory = await app.inject({ method: "GET", url: "/v1/accounts/me/transactions", headers: authHeader(bob) });
 
     expect(aliceHistory.statusCode).toBe(200);
     expect(aliceHistory.json().transactions[0]).toMatchObject({
@@ -96,7 +96,7 @@ describe("GET /accounts/me/transactions", () => {
       const txUuid = randomUUID();
       await app.inject({
         method: "POST",
-        url: "/transfers",
+        url: "/v1/transfers",
         headers: authHeader(alice),
         payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "100", currency: "MAD", reference: `tx ${i}` },
       });
@@ -107,8 +107,8 @@ describe("GET /accounts/me/transactions", () => {
     let cursor: string | null = null;
     for (let page = 0; page < 10; page++) {
       const url: string = cursor
-        ? `/accounts/me/transactions?limit=2&before=${encodeURIComponent(cursor)}`
-        : "/accounts/me/transactions?limit=2";
+        ? `/v1/accounts/me/transactions?limit=2&before=${encodeURIComponent(cursor)}`
+        : "/v1/accounts/me/transactions?limit=2";
       const res = await app.inject({ method: "GET", url, headers: authHeader(alice) });
       const body = res.json() as { transactions: { tx_uuid: string }[]; next_cursor: string | null };
       seen.push(...body.transactions.map((t) => t.tx_uuid));
@@ -124,7 +124,7 @@ describe("GET /accounts/me/transactions", () => {
   }, 20_000);
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/accounts/me/transactions" });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts/me/transactions" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -144,7 +144,7 @@ describe("GET /accounts/me/statement", () => {
     const txUuid = randomUUID();
     await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "1500", currency: "MAD", reference: "statement test" },
     });
@@ -153,7 +153,7 @@ describe("GET /accounts/me/statement", () => {
     const to = isoDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
     const response = await app.inject({
       method: "GET",
-      url: `/accounts/me/statement?from=${from}&to=${to}`,
+      url: `/v1/accounts/me/statement?from=${from}&to=${to}`,
       headers: authHeader(alice),
     });
 
@@ -168,7 +168,7 @@ describe("GET /accounts/me/statement", () => {
     const alice = await createTestCustomer(app, { startingBalance: 10_000n });
     const response = await app.inject({
       method: "GET",
-      url: "/accounts/me/statement?from=2000-01-01&to=2000-01-31",
+      url: "/v1/accounts/me/statement?from=2000-01-01&to=2000-01-31",
       headers: authHeader(alice),
     });
     expect(response.statusCode).toBe(200);
@@ -182,21 +182,21 @@ describe("GET /accounts/me/statement", () => {
     const alice = await createTestCustomer(app);
     const malformed = await app.inject({
       method: "GET",
-      url: "/accounts/me/statement?from=not-a-date&to=2026-01-01",
+      url: "/v1/accounts/me/statement?from=not-a-date&to=2026-01-01",
       headers: authHeader(alice),
     });
     expect(malformed.statusCode).toBe(400);
 
     const inverted = await app.inject({
       method: "GET",
-      url: "/accounts/me/statement?from=2026-06-01&to=2026-01-01",
+      url: "/v1/accounts/me/statement?from=2026-06-01&to=2026-01-01",
       headers: authHeader(alice),
     });
     expect(inverted.statusCode).toBe(400);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/accounts/me/statement?from=2026-01-01&to=2026-01-31" });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts/me/statement?from=2026-01-01&to=2026-01-31" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -209,18 +209,18 @@ describe("GET /me/data-export", () => {
     const txUuid = randomUUID();
     await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "500", currency: "MAD", reference: "export test" },
     });
     await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
 
-    const response = await app.inject({ method: "GET", url: "/me/data-export", headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: "/v1/me/data-export", headers: authHeader(alice) });
     expect(response.statusCode).toBe(200);
     const body = response.json();
 
@@ -234,19 +234,19 @@ describe("GET /me/data-export", () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app, { startingBalance: 10_000n }), createTestCustomer(app)]);
     await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(bob),
       payload: { display_name: "Alice", rib: alice.rib },
     });
 
-    const response = await app.inject({ method: "GET", url: "/me/data-export", headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: "/v1/me/data-export", headers: authHeader(alice) });
     const body = response.json();
     expect(body.profile.customer_id).toBe(alice.customerId);
     expect(body.beneficiaries).toHaveLength(0);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/me/data-export" });
+    const response = await app.inject({ method: "GET", url: "/v1/me/data-export" });
     expect(response.statusCode).toBe(401);
   });
 });

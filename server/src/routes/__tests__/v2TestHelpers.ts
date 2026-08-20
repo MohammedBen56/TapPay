@@ -64,7 +64,7 @@ export async function createTestCustomer(
     }
   });
 
-  const login = await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password } });
+  const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password } });
   const { access_token, refresh_token } = login.json() as { access_token: string; refresh_token: string };
 
   return { customerId, userId, accountId, rib, accessToken: access_token, refreshToken: refresh_token };

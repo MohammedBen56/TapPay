@@ -20,7 +20,7 @@ describe("audit log", () => {
 
   it("records a failed login against an unknown customer_id with a null user_id", async () => {
     const unknownCustomerId = randomUUID().replace(/-/g, "").slice(0, 8);
-    await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: unknownCustomerId, password: "whatever" } });
+    await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: unknownCustomerId, password: "whatever" } });
 
     const rows = await db
       .selectFrom("audit_log")
@@ -34,7 +34,7 @@ describe("audit log", () => {
 
   it("records a wrong-password login failure against the resolved user_id", async () => {
     const alice = await createTestCustomer(app, { password: "audit-test-pw-2" });
-    await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: alice.customerId, password: "definitely-wrong" } });
+    await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: alice.customerId, password: "definitely-wrong" } });
 
     const rows = await db
       .selectFrom("audit_log")
@@ -49,7 +49,7 @@ describe("audit log", () => {
     const alice = await createTestCustomer(app, { password: "audit-test-pw-3" });
     await app.inject({
       method: "POST",
-      url: "/auth/logout",
+      url: "/v1/auth/logout",
       headers: authHeader(alice),
       payload: { refresh_token: alice.refreshToken },
     });
@@ -68,13 +68,13 @@ describe("audit log", () => {
 
     const created = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
     const beneficiaryId = created.json().id;
 
-    await app.inject({ method: "DELETE", url: `/beneficiaries/${beneficiaryId}`, headers: authHeader(alice) });
+    await app.inject({ method: "DELETE", url: `/v1/beneficiaries/${beneficiaryId}`, headers: authHeader(alice) });
 
     const rows = await db
       .selectFrom("audit_log")
@@ -92,7 +92,7 @@ describe("audit log", () => {
 
     await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "100", currency: "MAD", reference: "audit test" },
     });

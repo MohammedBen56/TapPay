@@ -7,7 +7,7 @@ import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 import { billPaymentTotal } from "../metrics.js";
 import { createCursorCodec } from "./cursor.js";
-import { accountScopedRateLimitedPreHandlers, sendSettlementFailure } from "./settlementRouteHelpers.js";
+import { accountScopedRateLimitedPreHandlers, echoIdempotencyKey, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
 const CATEGORY_LABELS: Record<BillerCategory, string> = {
   electricity: "Electricity",
@@ -30,9 +30,9 @@ const subscriberReferenceSchema = z
   .refine((s) => ![...s].some((c) => c.charCodeAt(0) < 0x20), { message: "subscriber_reference must not contain control characters" })
   .transform((s) => s.normalize("NFC"));
 
-const categoryQuerySchema = z.enum(["electricity", "water", "internet"]).optional();
+export const categoryQuerySchema = z.enum(["electricity", "water", "internet"]).optional();
 
-const payBillBodySchema = z.object({
+export const payBillBodySchema = z.object({
   tx_uuid: z.string().uuid(),
   biller_id: z.string().uuid(),
   subscriber_reference: subscriberReferenceSchema,
@@ -40,7 +40,7 @@ const payBillBodySchema = z.object({
   currency: z.string().length(3),
 });
 
-const billPaymentsQuerySchema = z.object({
+export const billPaymentsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   before: z.string().optional(),
 });
@@ -114,6 +114,7 @@ export function registerBillPaymentRoutes(app: FastifyInstance): void {
     }
     billPaymentTotal.inc({ outcome: "settled" });
     await recordAudit({ userId, action: "bill_payment.settle", resourceType: "bill_payment", resourceId: tx_uuid, ip: request.ip });
+    echoIdempotencyKey(request, reply, tx_uuid);
 
     const [, balance] = await Promise.all([
       db

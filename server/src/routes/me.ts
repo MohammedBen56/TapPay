@@ -29,14 +29,14 @@ const STATEMENT_ROW_CAP = 5_000;
 // Ship List v2 Phase 8: every account-scoped GET accepts this same
 // optional `account_id`, resolved via accountSelection.ts's ownership
 // check. Absent -> the caller's checking account (unchanged behavior).
-const accountIdQuerySchema = z.object({ account_id: z.string().uuid().optional() });
+export const accountIdQuerySchema = z.object({ account_id: z.string().uuid().optional() });
 
-const transactionsQuerySchema = accountIdQuerySchema.extend({
+export const transactionsQuerySchema = accountIdQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   before: z.string().optional(),
 });
 
-const statementQuerySchema = accountIdQuerySchema
+export const statementQuerySchema = accountIdQuerySchema
   .extend({
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "from must be YYYY-MM-DD"),
     to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "to must be YYYY-MM-DD"),

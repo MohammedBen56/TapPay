@@ -11,37 +11,37 @@ describe("beneficiaries CRUD", () => {
 
     const created = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
     expect(created.statusCode).toBe(201);
     const id = created.json().id;
 
-    const listed = await app.inject({ method: "GET", url: "/beneficiaries", headers: authHeader(alice) });
+    const listed = await app.inject({ method: "GET", url: "/v1/beneficiaries", headers: authHeader(alice) });
     expect(listed.json().beneficiaries).toEqual([{ id, display_name: "Bob", rib: bob.rib }]);
 
     const updated = await app.inject({
       method: "PATCH",
-      url: `/beneficiaries/${id}`,
+      url: `/v1/beneficiaries/${id}`,
       headers: authHeader(alice),
       payload: { display_name: "Bob (updated)" },
     });
     expect(updated.statusCode).toBe(200);
     expect(updated.json().display_name).toBe("Bob (updated)");
 
-    const deleted = await app.inject({ method: "DELETE", url: `/beneficiaries/${id}`, headers: authHeader(alice) });
+    const deleted = await app.inject({ method: "DELETE", url: `/v1/beneficiaries/${id}`, headers: authHeader(alice) });
     expect(deleted.statusCode).toBe(204);
 
-    const listedAfter = await app.inject({ method: "GET", url: "/beneficiaries", headers: authHeader(alice) });
+    const listedAfter = await app.inject({ method: "GET", url: "/v1/beneficiaries", headers: authHeader(alice) });
     expect(listedAfter.json().beneficiaries).toEqual([]);
   });
 
   it("rejects a duplicate RIB for the same owner", async () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app), createTestCustomer(app)]);
     const payload = { display_name: "Bob", rib: bob.rib };
-    await app.inject({ method: "POST", url: "/beneficiaries", headers: authHeader(alice), payload });
-    const second = await app.inject({ method: "POST", url: "/beneficiaries", headers: authHeader(alice), payload });
+    await app.inject({ method: "POST", url: "/v1/beneficiaries", headers: authHeader(alice), payload });
+    const second = await app.inject({ method: "POST", url: "/v1/beneficiaries", headers: authHeader(alice), payload });
     expect(second.statusCode).toBe(409);
     expect(second.json().error).toBe("DuplicateBeneficiary");
   });
@@ -50,7 +50,7 @@ describe("beneficiaries CRUD", () => {
     const alice = await createTestCustomer(app);
     const response = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Myself", rib: alice.rib },
     });
@@ -62,7 +62,7 @@ describe("beneficiaries CRUD", () => {
     const alice = await createTestCustomer(app);
     const response = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Ghost", rib: unassignedValidRib() },
     });
@@ -74,32 +74,32 @@ describe("beneficiaries CRUD", () => {
     const [alice, bob, mallory] = await Promise.all([createTestCustomer(app), createTestCustomer(app), createTestCustomer(app)]);
     const created = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
     const id = created.json().id;
 
-    const malloryList = await app.inject({ method: "GET", url: "/beneficiaries", headers: authHeader(mallory) });
+    const malloryList = await app.inject({ method: "GET", url: "/v1/beneficiaries", headers: authHeader(mallory) });
     expect(malloryList.json().beneficiaries).toEqual([]);
 
     const malloryUpdate = await app.inject({
       method: "PATCH",
-      url: `/beneficiaries/${id}`,
+      url: `/v1/beneficiaries/${id}`,
       headers: authHeader(mallory),
       payload: { display_name: "Hijacked" },
     });
     expect(malloryUpdate.statusCode).toBe(404);
 
-    const malloryDelete = await app.inject({ method: "DELETE", url: `/beneficiaries/${id}`, headers: authHeader(mallory) });
+    const malloryDelete = await app.inject({ method: "DELETE", url: `/v1/beneficiaries/${id}`, headers: authHeader(mallory) });
     expect(malloryDelete.statusCode).toBe(404);
 
-    const aliceListAfter = await app.inject({ method: "GET", url: "/beneficiaries", headers: authHeader(alice) });
+    const aliceListAfter = await app.inject({ method: "GET", url: "/v1/beneficiaries", headers: authHeader(alice) });
     expect(aliceListAfter.json().beneficiaries).toHaveLength(1);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/beneficiaries" });
+    const response = await app.inject({ method: "GET", url: "/v1/beneficiaries" });
     expect(response.statusCode).toBe(401);
   });
 });

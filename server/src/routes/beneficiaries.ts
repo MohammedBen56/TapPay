@@ -4,11 +4,11 @@ import { z } from "zod";
 import { recordAudit } from "../audit/log.js";
 import { db } from "../db/kysely.js";
 
-const createBodySchema = z.object({
+export const createBodySchema = z.object({
   display_name: z.string().trim().min(1).max(140),
   rib: z.string(),
 });
-const updateBodySchema = z.object({
+export const updateBodySchema = z.object({
   display_name: z.string().trim().min(1).max(140),
 });
 

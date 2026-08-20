@@ -18,7 +18,7 @@ describe("GET /accounts", () => {
 
   it("lists the caller's checking account by default", async () => {
     const session = await createTestCustomer(app, { startingBalance: 5_000n });
-    const response = await app.inject({ method: "GET", url: "/accounts", headers: authHeader(session) });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts", headers: authHeader(session) });
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.accounts).toHaveLength(1);
@@ -32,9 +32,9 @@ describe("GET /accounts", () => {
 
   it("lists both accounts once savings is opened", async () => {
     const session = await createTestCustomer(app);
-    await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
+    await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
 
-    const response = await app.inject({ method: "GET", url: "/accounts", headers: authHeader(session) });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts", headers: authHeader(session) });
     const body = response.json();
     expect(body.accounts).toHaveLength(2);
     expect(body.accounts.map((a: { account_type: string }) => a.account_type).sort()).toEqual(["checking", "savings"]);
@@ -42,14 +42,14 @@ describe("GET /accounts", () => {
 
   it("never includes another customer's accounts", async () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app), createTestCustomer(app)]);
-    await app.inject({ method: "POST", url: "/accounts", headers: authHeader(bob), payload: { account_type: "savings" } });
+    await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(bob), payload: { account_type: "savings" } });
 
-    const response = await app.inject({ method: "GET", url: "/accounts", headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts", headers: authHeader(alice) });
     expect(response.json().accounts).toHaveLength(1);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/accounts" });
+    const response = await app.inject({ method: "GET", url: "/v1/accounts" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -59,7 +59,7 @@ describe("POST /accounts", () => {
 
   it("opens a savings account with a fresh, distinct RIB", async () => {
     const session = await createTestCustomer(app);
-    const response = await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
+    const response = await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
     expect(response.statusCode).toBe(201);
     const body = response.json();
     expect(body).toMatchObject({ account_type: "savings", currency: "MAD", available_balance: "0" });
@@ -69,20 +69,20 @@ describe("POST /accounts", () => {
 
   it("rejects opening a second savings account for the same customer", async () => {
     const session = await createTestCustomer(app);
-    await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
-    const second = await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
+    await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
+    const second = await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
     expect(second.statusCode).toBe(409);
     expect(second.json()).toMatchObject({ error: "DuplicateAccount" });
   });
 
   it("rejects a client attempting to open a checking account", async () => {
     const session = await createTestCustomer(app);
-    const response = await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "checking" } });
+    const response = await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "checking" } });
     expect(response.statusCode).toBe(400);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "POST", url: "/accounts", payload: { account_type: "savings" } });
+    const response = await app.inject({ method: "POST", url: "/v1/accounts", payload: { account_type: "savings" } });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -91,7 +91,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
   const app = buildApp({ rateLimit: false });
 
   async function openSavings(session: Awaited<ReturnType<typeof createTestCustomer>>): Promise<{ account_id: string; rib: string }> {
-    const res = await app.inject({ method: "POST", url: "/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
+    const res = await app.inject({ method: "POST", url: "/v1/accounts", headers: authHeader(session), payload: { account_type: "savings" } });
     return res.json();
   }
 
@@ -99,16 +99,16 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const session = await createTestCustomer(app);
     const savings = await openSavings(session);
 
-    const defaultRes = await app.inject({ method: "GET", url: "/me", headers: authHeader(session) });
+    const defaultRes = await app.inject({ method: "GET", url: "/v1/me", headers: authHeader(session) });
     expect(defaultRes.json()).toMatchObject({ account_id: session.accountId, account_type: "checking" });
 
-    const savingsRes = await app.inject({ method: "GET", url: `/me?account_id=${savings.account_id}`, headers: authHeader(session) });
+    const savingsRes = await app.inject({ method: "GET", url: `/v1/me?account_id=${savings.account_id}`, headers: authHeader(session) });
     expect(savingsRes.json()).toMatchObject({ account_id: savings.account_id, account_type: "savings" });
   });
 
   it("GET /me 404s on another customer's account_id -- no existence leak", async () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app), createTestCustomer(app)]);
-    const response = await app.inject({ method: "GET", url: `/me?account_id=${bob.accountId}`, headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: `/v1/me?account_id=${bob.accountId}`, headers: authHeader(alice) });
     expect(response.statusCode).toBe(404);
   });
 
@@ -116,12 +116,12 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const session = await createTestCustomer(app, { startingBalance: 1_000n });
     const savings = await openSavings(session);
 
-    const checkingBalance = await app.inject({ method: "GET", url: "/accounts/me/balance", headers: authHeader(session) });
+    const checkingBalance = await app.inject({ method: "GET", url: "/v1/accounts/me/balance", headers: authHeader(session) });
     expect(checkingBalance.json()).toMatchObject({ account_id: session.accountId, available_balance: "1000" });
 
     const savingsBalance = await app.inject({
       method: "GET",
-      url: `/accounts/me/balance?account_id=${savings.account_id}`,
+      url: `/v1/accounts/me/balance?account_id=${savings.account_id}`,
       headers: authHeader(session),
     });
     expect(savingsBalance.json()).toMatchObject({ account_id: savings.account_id, available_balance: "0" });
@@ -135,15 +135,15 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const internalTxUuid = randomUUID();
     const internal = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: internalTxUuid, to_rib: savings.rib, amount: "2000", currency: "MAD", reference: "to savings" },
     });
     expect(internal.statusCode).toBe(200);
 
     const afterInternal = await Promise.all([
-      app.inject({ method: "GET", url: "/accounts/me/balance", headers: authHeader(alice) }),
-      app.inject({ method: "GET", url: `/accounts/me/balance?account_id=${savings.account_id}`, headers: authHeader(alice) }),
+      app.inject({ method: "GET", url: "/v1/accounts/me/balance", headers: authHeader(alice) }),
+      app.inject({ method: "GET", url: `/v1/accounts/me/balance?account_id=${savings.account_id}`, headers: authHeader(alice) }),
     ]);
     expect(afterInternal[0].json().available_balance).toBe("8000");
     expect(afterInternal[1].json().available_balance).toBe("2000");
@@ -153,7 +153,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const outTxUuid = randomUUID();
     const out = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: {
         tx_uuid: outTxUuid,
@@ -168,7 +168,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
 
     const finalSavings = await app.inject({
       method: "GET",
-      url: `/accounts/me/balance?account_id=${savings.account_id}`,
+      url: `/v1/accounts/me/balance?account_id=${savings.account_id}`,
       headers: authHeader(alice),
     });
     expect(finalSavings.json().available_balance).toBe("1500");
@@ -178,7 +178,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const alice = await createTestCustomer(app, { startingBalance: 1_000n });
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: {
         tx_uuid: randomUUID(),
@@ -202,7 +202,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     // the earlier test in this suite already exercises.
     await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: savings.rib, amount: "1000", currency: "MAD", reference: "fund savings" },
     });
@@ -210,13 +210,13 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const txUuid = randomUUID();
     const settle = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "300", currency: "MAD", reference: "from savings", from_account_id: savings.account_id },
     });
     expect(settle.statusCode, settle.body).toBe(200);
 
-    const receipt = await app.inject({ method: "GET", url: `/transfers/${txUuid}`, headers: authHeader(alice) });
+    const receipt = await app.inject({ method: "GET", url: `/v1/transfers/${txUuid}`, headers: authHeader(alice) });
     expect(receipt.statusCode).toBe(200);
     expect(receipt.json()).toMatchObject({ direction: "debit", amount: "300" });
   });
@@ -234,14 +234,14 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
 
     // A fresh /auth/refresh, issued AFTER savings exists -- exactly the
     // window the bug lived in.
-    const refreshed = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: alice.refreshToken } });
+    const refreshed = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token: alice.refreshToken } });
     expect(refreshed.statusCode).toBe(200);
     const freshToken = refreshed.json().access_token as string;
 
     const biller = await anyBillerByCategory("electricity");
     const payment = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: { authorization: `Bearer ${freshToken}` },
       payload: { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "ACC-1", amount: "500", currency: "MAD" },
     });
@@ -249,7 +249,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
 
     const checkingBalance = await app.inject({
       method: "GET",
-      url: "/accounts/me/balance",
+      url: "/v1/accounts/me/balance",
       headers: { authorization: `Bearer ${freshToken}` },
     });
     expect(checkingBalance.json().available_balance).toBe("9500"); // 10_000 - 500, debited from checking
@@ -260,7 +260,7 @@ describe("Account-selectable routes (Ship List v2 Phase 8)", () => {
     const savings = await openSavings(alice);
     const response = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Myself", rib: savings.rib },
     });

@@ -13,13 +13,13 @@ import {
 import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 
-const loginBodySchema = z.object({
+export const loginBodySchema = z.object({
   customer_id: z.string().min(1),
   password: z.string().min(1),
 });
-const refreshBodySchema = z.object({ refresh_token: z.string().min(1) });
-const logoutBodySchema = z.object({ refresh_token: z.string().min(1) });
-const changePasswordBodySchema = z.object({
+export const refreshBodySchema = z.object({ refresh_token: z.string().min(1) });
+export const logoutBodySchema = z.object({ refresh_token: z.string().min(1) });
+export const changePasswordBodySchema = z.object({
   current_password: z.string().min(1),
   new_password: z.string().min(8, "new_password must be at least 8 characters"),
 });

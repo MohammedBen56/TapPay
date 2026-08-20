@@ -1,5 +1,5 @@
 import type { CommitResult } from "@tappay/shared";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Counter } from "prom-client";
 
 /** Shared by every route that settles money and needs both auth and a
@@ -43,4 +43,22 @@ export function sendSettlementFailure(
   }
   counter.inc({ outcome: "insufficient_funds" });
   return reply.status(409).send({ error: "InsufficientFunds", message: result.failureReason });
+}
+
+/**
+ * Ship List v2 Wave 2 Phase 3: a formal `Idempotency-Key` header
+ * convention for the two settlement routes (`/transfers`, `/bill-
+ * payments`), as documentation/header-passthrough addition -- `tx_uuid`
+ * already correctly handles money-movement idempotency (CLAUDE.md §5);
+ * this is NOT a second idempotency mechanism, it's echoing back the
+ * industry-standard header (Stripe-style) a real bank integration
+ * partner expects to send, and logging it alongside `tx_uuid` for
+ * traceability. Call after a successful settlement, before `reply.send`.
+ */
+export function echoIdempotencyKey(request: FastifyRequest, reply: FastifyReply, txUuid: string): void {
+  const key = request.headers["idempotency-key"];
+  if (typeof key === "string" && key.length > 0) {
+    reply.header("Idempotency-Key", key);
+    request.log.info({ idempotencyKey: key, tx_uuid: txUuid }, "idempotency-key received");
+  }
 }

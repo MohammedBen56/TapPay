@@ -326,6 +326,22 @@ export class MockBankAdapter implements IBankAdapter {
         ])
         .execute();
 
+      // Ship List v2 Wave 2 Phase 3: outbox event, written in the same
+      // transaction as the journal write above so a settlement can never
+      // exist without a corresponding event -- foreshadows real bank
+      // webhook delivery without building the whole integration now (see
+      // 023_settlement_events.cjs). onConflict...doNothing for the same
+      // reason the `transfers` insert below does: this branch can also be
+      // reached by a fresh commit of a HELD reservation, and a resubmission
+      // never reaches this far (the COMMITTED-replay branch returns
+      // earlier), so a real conflict here would only ever be this same
+      // idempotent-shape edge case, never two different settlements racing.
+      await trx
+        .insertInto("settlement_events")
+        .values({ tx_uuid: txUuid, from_account_id: fromAccountId, to_account_id: toAccountId, amount, currency })
+        .onConflict((oc) => oc.column("tx_uuid").doNothing())
+        .execute();
+
       const receiptSignature = await this.signReceipt({
         txUuid,
         amount,

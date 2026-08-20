@@ -155,6 +155,19 @@ export interface TransfersTable {
   created_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 3 (023_settlement_events.cjs): an outbox
+ * table for the IBankAdapter seam -- written by MockBankAdapter.transfer()
+ * inside the same transaction as the journal/transfers writes. See the
+ * migration's own comment for the full reasoning. */
+export interface SettlementEventsTable {
+  tx_uuid: string;
+  from_account_id: string;
+  to_account_id: string;
+  amount: bigint;
+  currency: string;
+  created_at: Generated<Date>;
+}
+
 export type BillerCategory = "electricity" | "water" | "internet";
 
 /** Bill payments (018_billers.cjs): a mock biller catalog. Each biller is
@@ -210,6 +223,7 @@ export interface Database {
   billers: BillersTable;
   bill_payments: BillPaymentsTable;
   audit_log: AuditLogTable;
+  settlement_events: SettlementEventsTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

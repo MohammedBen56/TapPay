@@ -13,7 +13,7 @@ describe("POST /transfers", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, to_rib: bob.rib, amount: "2500", currency: "MAD", reference: "Remboursement déjeuner" },
     });
@@ -29,8 +29,8 @@ describe("POST /transfers", () => {
     });
 
     const [aliceView, bobView] = await Promise.all([
-      app.inject({ method: "GET", url: `/transfers/${txUuid}`, headers: authHeader(alice) }),
-      app.inject({ method: "GET", url: `/transfers/${txUuid}`, headers: authHeader(bob) }),
+      app.inject({ method: "GET", url: `/v1/transfers/${txUuid}`, headers: authHeader(alice) }),
+      app.inject({ method: "GET", url: `/v1/transfers/${txUuid}`, headers: authHeader(bob) }),
     ]);
     expect(aliceView.json()).toMatchObject({ direction: "debit", reference: "Remboursement déjeuner" });
     expect(bobView.json()).toMatchObject({ direction: "credit", reference: "Remboursement déjeuner" });
@@ -43,7 +43,7 @@ describe("POST /transfers", () => {
     ]);
     const addBeneficiary = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
@@ -51,7 +51,7 @@ describe("POST /transfers", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_beneficiary_id: beneficiaryId, amount: "500", currency: "MAD", reference: "test" },
     });
@@ -67,7 +67,7 @@ describe("POST /transfers", () => {
     ]);
     const addBeneficiary = await app.inject({
       method: "POST",
-      url: "/beneficiaries",
+      url: "/v1/beneficiaries",
       headers: authHeader(alice),
       payload: { display_name: "Bob", rib: bob.rib },
     });
@@ -75,7 +75,7 @@ describe("POST /transfers", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(mallory),
       payload: { tx_uuid: randomUUID(), to_beneficiary_id: beneficiaryId, amount: "500", currency: "MAD", reference: "test" },
     });
@@ -88,7 +88,7 @@ describe("POST /transfers", () => {
     const alice = await createTestCustomer(app, { startingBalance: 10_000n });
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: alice.rib, amount: "100", currency: "MAD", reference: "test" },
     });
@@ -100,7 +100,7 @@ describe("POST /transfers", () => {
     const alice = await createTestCustomer(app, { startingBalance: 10_000n });
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: unassignedValidRib(), amount: "100", currency: "MAD", reference: "test" },
     });
@@ -112,7 +112,7 @@ describe("POST /transfers", () => {
     const alice = await createTestCustomer(app, { startingBalance: 10_000n });
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: "not-a-rib", amount: "100", currency: "MAD", reference: "test" },
     });
@@ -124,7 +124,7 @@ describe("POST /transfers", () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app, { startingBalance: 10_000n }), createTestCustomer(app)]);
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: bob.rib, amount: "100", currency: "MAD", reference: "   " },
     });
@@ -135,20 +135,20 @@ describe("POST /transfers", () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app, { startingBalance: 10_000n }), createTestCustomer(app)]);
     const payload = { tx_uuid: randomUUID(), to_rib: bob.rib, amount: "1000", currency: "MAD", reference: "test" };
 
-    const first = await app.inject({ method: "POST", url: "/transfers", headers: authHeader(alice), payload });
-    const second = await app.inject({ method: "POST", url: "/transfers", headers: authHeader(alice), payload });
+    const first = await app.inject({ method: "POST", url: "/v1/transfers", headers: authHeader(alice), payload });
+    const second = await app.inject({ method: "POST", url: "/v1/transfers", headers: authHeader(alice), payload });
 
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
 
-    const balance = await app.inject({ method: "GET", url: "/accounts/me/balance", headers: authHeader(alice) });
+    const balance = await app.inject({ method: "GET", url: "/v1/accounts/me/balance", headers: authHeader(alice) });
     expect(balance.json().available_balance).toBe("9000");
   });
 
   it("requires a valid access token", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       payload: { tx_uuid: randomUUID(), to_rib: unassignedValidRib(), amount: "100", currency: "MAD", reference: "test" },
     });
     expect(response.statusCode).toBe(401);
@@ -166,13 +166,13 @@ describe("GET /transfers/:txUuid", () => {
     ]);
     const submit = await app.inject({
       method: "POST",
-      url: "/transfers",
+      url: "/v1/transfers",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), to_rib: bob.rib, amount: "100", currency: "MAD", reference: "test" },
     });
     const txUuid = submit.json().tx_uuid;
 
-    const response = await app.inject({ method: "GET", url: `/transfers/${txUuid}`, headers: authHeader(mallory) });
+    const response = await app.inject({ method: "GET", url: `/v1/transfers/${txUuid}`, headers: authHeader(mallory) });
     expect(response.statusCode).toBe(404);
   });
 });
@@ -182,22 +182,22 @@ describe("GET /lookup/rib/:rib", () => {
 
   it("resolves a valid, known RIB to its display name", async () => {
     const [alice, bob] = await Promise.all([createTestCustomer(app), createTestCustomer(app, { displayName: "Karim Bennani" })]);
-    const response = await app.inject({ method: "GET", url: `/lookup/rib/${bob.rib}`, headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: `/v1/lookup/rib/${bob.rib}`, headers: authHeader(alice) });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ rib: bob.rib, display_name: "Karim Bennani" });
   });
 
   it("404s identically for a syntactically valid-but-unknown RIB and a malformed one -- no enumeration signal", async () => {
     const alice = await createTestCustomer(app);
-    const unknown = await app.inject({ method: "GET", url: `/lookup/rib/${unassignedValidRib()}`, headers: authHeader(alice) });
-    const malformed = await app.inject({ method: "GET", url: "/lookup/rib/not-a-rib", headers: authHeader(alice) });
+    const unknown = await app.inject({ method: "GET", url: `/v1/lookup/rib/${unassignedValidRib()}`, headers: authHeader(alice) });
+    const malformed = await app.inject({ method: "GET", url: "/v1/lookup/rib/not-a-rib", headers: authHeader(alice) });
     expect(unknown.statusCode).toBe(404);
     expect(malformed.statusCode).toBe(404);
     expect(unknown.json()).toEqual(malformed.json());
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: `/lookup/rib/${unassignedValidRib()}` });
+    const response = await app.inject({ method: "GET", url: `/v1/lookup/rib/${unassignedValidRib()}` });
     expect(response.statusCode).toBe(401);
   });
 });

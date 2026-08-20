@@ -76,6 +76,29 @@ describe("MockBankAdapter", () => {
     });
   });
 
+  it("transfer() writes a matching settlement_events outbox row in the same transaction, regardless of whether a reference was supplied", async () => {
+    const [a, b] = await Promise.all([createFundedAccount(10_000n), createFundedAccount(0n)]);
+    const txUuid = randomUUID();
+
+    const result = await adapter.transfer(txUuid, a, b, 750n, "MAD"); // no reference -- the parked P2P shape
+
+    expect(result.success).toBe(true);
+    const row = await db.selectFrom("settlement_events").selectAll().where("tx_uuid", "=", txUuid).executeTakeFirst();
+    expect(row).toMatchObject({ tx_uuid: txUuid, from_account_id: a, to_account_id: b, amount: 750n, currency: "MAD" });
+  });
+
+  it("idempotent resubmission does not write a second settlement_events row", async () => {
+    const [a, b] = await Promise.all([createFundedAccount(10_000n), createFundedAccount(0n)]);
+    const txUuid = randomUUID();
+
+    await adapter.transfer(txUuid, a, b, 200n, "MAD");
+    const second = await adapter.transfer(txUuid, a, b, 200n, "MAD");
+
+    expect(second.success).toBe(true);
+    const rows = await db.selectFrom("settlement_events").selectAll().where("tx_uuid", "=", txUuid).execute();
+    expect(rows).toHaveLength(1);
+  });
+
   it("transfer() with no reference in the TransferContext creates no transfers row -- the parked P2P path never supplies one", async () => {
     const [a, b] = await Promise.all([createFundedAccount(10_000n), createFundedAccount(0n)]);
     const txUuid = randomUUID();

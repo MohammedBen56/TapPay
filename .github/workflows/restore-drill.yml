@@ -1,0 +1,104 @@
+name: Restore drill
+
+# Ship List v2 Wave 2 Phase 3: server/scripts/restore-drill.ts already proves
+# a single restore is clean when run by hand (pnpm --filter server
+# restore-drill, ops/RESTORE_DRILL.md's existing rows). What was missing was
+# a SCHEDULE -- a restore drill nobody runs regularly proves nothing about
+# whether restores still work next month. This workflow runs the same
+# script weekly (plus on-demand via workflow_dispatch) and commits its
+# dated log row back to ops/RESTORE_DRILL.md, so drift shows up as a stale
+# date in that file, not as a surprise during a real incident.
+#
+# Deliberately NOT wired into the app's own in-process singleton-job
+# pattern (sweeper.ts/tripwire.ts's pg_try_advisory_xact_lock jobs) --
+# restore-drill.ts shells out to `docker run`/`docker compose exec` and
+# takes tens of seconds per run (container startup + a real pg_dump/psql
+# round trip), which is a fundamentally different shape from those jobs'
+# sub-second periodic DB queries. A scheduled CI job is the right host for
+# an operation this heavy, matching how ci.yml already runs migrate/test
+# against a docker-compose-launched db, not GH Actions' native `services:`
+# (restore-drill.ts's `docker compose exec -T db ...` calls need the actual
+# compose service, not a bare service container).
+
+on:
+  schedule:
+    # 04:17 UTC every Monday -- an off-the-hour time, matching the general
+    # advice against scheduling CI on exact hour/day boundaries where every
+    # other repo's cron also fires.
+    - cron: "17 4 * * 1"
+  workflow_dispatch: {}
+
+# Least-privilege default (matches ci.yml); the one job below that needs to
+# commit the log row grants contents: write on itself, not here.
+permissions:
+  contents: read
+
+jobs:
+  restore-drill:
+    name: Dump, restore into a throwaway container, check invariants
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to commit the dated row back to ops/RESTORE_DRILL.md
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: true # this job pushes its own commit below
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.15.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same ephemeral-secret pattern as ci.yml's test job -- a fresh
+      # JWT_SECRET/APP_DB_PASSWORD per run, never a static committed value.
+      - name: Generate ephemeral secrets and write .env
+        run: |
+          JWT_SECRET=$(openssl rand -hex 32)
+          APP_DB_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::$JWT_SECRET"
+          echo "::add-mask::$APP_DB_PASSWORD"
+          cat > .env <<EOF
+          POSTGRES_DB=tappay
+          POSTGRES_USER=tappay
+          POSTGRES_PASSWORD=tappay
+          DATABASE_URL=postgres://tappay:tappay@localhost:5433/tappay
+          APP_DB_PASSWORD=${APP_DB_PASSWORD}
+          APP_DATABASE_URL=postgres://tappay_app:${APP_DB_PASSWORD}@localhost:5433/tappay
+          SERVER_PORT=3000
+          JWT_SECRET=${JWT_SECRET}
+          EOF
+
+      # restore-drill.ts's dump step is `docker compose exec -T db
+      # pg_dump ...` -- it needs the real compose service up, not just a
+      # database reachable on the same port.
+      - name: Start db via docker compose
+        run: |
+          docker compose up -d db
+          timeout 60 sh -c 'until docker compose exec -T db pg_isready -U tappay -d tappay; do sleep 2; done'
+
+      - name: Migrate + seed (real, non-trivial data to restore and check)
+        run: |
+          pnpm --filter server migrate
+          pnpm --filter server seed
+
+      - name: Run the restore drill
+        run: pnpm --filter server restore-drill
+
+      # Non-fatal if there's nothing new to commit (a re-run within the
+      # same UTC minute would collide on the log's own timestamp column,
+      # not on content -- this is defensive, not expected to trigger).
+      - name: Commit the dated row to ops/RESTORE_DRILL.md
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ops/RESTORE_DRILL.md
+          git diff --cached --quiet && echo "no change to commit" && exit 0
+          git commit -m "chore: scheduled restore-drill log row [skip ci]"
+          git push

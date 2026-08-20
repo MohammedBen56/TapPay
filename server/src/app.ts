@@ -1,6 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
+import swagger from "@fastify/swagger";
 import { sql } from "kysely";
 import { setAuditLogger } from "./audit/log.js";
 import { registerAuthPlugin } from "./auth/plugin.js";
@@ -9,6 +10,7 @@ import { db, setDbLogger } from "./db/kysely.js";
 import { appliedMigrationIsCurrent, withTimeout } from "./health.js";
 import { loggerOptions } from "./logging.js";
 import { register } from "./metrics.js";
+import { buildOpenApiDocument } from "./openapi.js";
 import { redis, setRedisLogger } from "./redis.js";
 import { registerDeviceRoutes } from "./parked/routes/devices.js";
 import { registerSyncRoutes } from "./parked/routes/sync.js";
@@ -57,6 +59,13 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({ logger: loggerOptions });
   app.decorate("isShuttingDown", false);
   app.register(sensible);
+  // Ship List v2 Wave 2 Phase 3: static mode -- a hand-assembled document
+  // (openapi.ts), NOT automatic per-route schema introspection. See
+  // openapi.ts's own header comment for why: every route here does its
+  // own manual Zod validation with a project-specific error shape, and
+  // wiring Fastify's own schema-driven AJV validator on top would risk
+  // changing real request-handling behavior for the sake of documentation.
+  void app.register(swagger, { mode: "static", specification: { document: buildOpenApiDocument() } });
   registerAuthPlugin(app);
   setRedisLogger(app.log);
   setDbLogger(app.log);
@@ -161,13 +170,44 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       return register.metrics();
     });
 
-    registerAuthRoutes(app);
-    registerAccountRoutes(app);
-    registerMeRoutes(app);
-    registerTransferRoutes(app);
-    registerLookupRoutes(app);
-    registerBeneficiaryRoutes(app);
-    registerBillPaymentRoutes(app);
+    // Ship List v2 Wave 2 Phase 3: the live v2 API surface moves under
+    // /v1 -- cheap now (one owner, one client), expensive later once a
+    // real client pins to unversioned routes. Scoped deliberately: only
+    // the actual v2 API (auth/accounts/me/transfers/lookup/
+    // beneficiaries/bill-payments). /health*, /metrics stay unprefixed
+    // (infra/ops endpoints, not versioned API surface -- a decision made
+    // explicitly, not defaulted). The parked P2P surface (tx.ts, and the
+    // device/COSE/sync routes below when enabled) is its OWN trust
+    // boundary and wire contract (COSE-signed, not JWT -- see
+    // docs/THREAT_MODEL.md) with its own already-passing test suite
+    // asserting bare paths -- deliberately NOT moved under /v1 in this
+    // pass, to avoid conflating two different API surfaces' versioning.
+    //
+    // Registered as a nested, prefixed child of `app` (not a sibling
+    // top-level register) specifically so it inherits the rate-limit
+    // plugin's onRoute hook already attached to `app` above -- Fastify's
+    // onRoute hooks apply across encapsulation boundaries to any route
+    // registered after the hook was added, regardless of prefix nesting.
+    // Verified live after this change (curl through /v1/... and confirm
+    // both the route resolves AND per-route rate limiting still fires).
+    void app.register(
+      async (v1) => {
+        // Unauthenticated, matching /metrics' reasoning above -- a real
+        // bank integration partner needs to fetch this before they have
+        // any credential to authenticate with.
+        v1.get("/openapi.json", async () => app.swagger());
+
+        registerAuthRoutes(v1);
+        registerAccountRoutes(v1);
+        registerMeRoutes(v1);
+        registerTransferRoutes(v1);
+        registerLookupRoutes(v1);
+        registerBeneficiaryRoutes(v1);
+        registerBillPaymentRoutes(v1);
+      },
+      { prefix: "/v1" },
+    );
+
     registerTxRoutes(app);
 
     if (options.proximityRoutes ?? config.enableProximityRoutes) {

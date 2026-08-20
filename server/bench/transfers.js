@@ -32,6 +32,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
+// Ship List v2 Wave 2 Phase 3: the live v2 API moved under /v1.
+const API_URL = `${BASE_URL}/v1`;
 
 const DEMO_ACCOUNTS = [
   { customer_id: "10000001", password: "Demo#2026", rib: "999780000000000000100113" },
@@ -43,7 +45,7 @@ const DEMO_ACCOUNTS = [
 
 export function setup() {
   const tokens = DEMO_ACCOUNTS.map(({ customer_id, password }) => {
-    const res = http.post(`${BASE_URL}/auth/login`, JSON.stringify({ customer_id, password }), {
+    const res = http.post(`${API_URL}/auth/login`, JSON.stringify({ customer_id, password }), {
       headers: { "Content-Type": "application/json" },
     });
     if (res.status !== 200) {
@@ -89,13 +91,13 @@ export function readPath(data) {
   const token = data.tokens[__VU % data.tokens.length];
   const headers = { Authorization: `Bearer ${token}` };
 
-  const me = http.get(`${BASE_URL}/me`, { headers, tags: { name: "GET /me" } });
+  const me = http.get(`${API_URL}/me`, { headers, tags: { name: "GET /me" } });
   check(me, { "GET /me: 200": (r) => r.status === 200 });
 
-  const balance = http.get(`${BASE_URL}/accounts/me/balance`, { headers, tags: { name: "GET /accounts/me/balance" } });
+  const balance = http.get(`${API_URL}/accounts/me/balance`, { headers, tags: { name: "GET /accounts/me/balance" } });
   check(balance, { "GET /accounts/me/balance: 200": (r) => r.status === 200 });
 
-  const transactions = http.get(`${BASE_URL}/accounts/me/transactions?limit=20`, {
+  const transactions = http.get(`${API_URL}/accounts/me/transactions?limit=20`, {
     headers,
     tags: { name: "GET /accounts/me/transactions" },
   });
@@ -117,7 +119,7 @@ export function writePath(data) {
     currency: "MAD",
     reference: "k6 load test",
   });
-  const res = http.post(`${BASE_URL}/transfers`, body, { headers, tags: { name: "POST /transfers" } });
+  const res = http.post(`${API_URL}/transfers`, body, { headers, tags: { name: "POST /transfers" } });
   check(res, {
     "POST /transfers: 200 or 429": (r) => r.status === 200 || r.status === 429,
   });

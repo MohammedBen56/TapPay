@@ -61,7 +61,7 @@ describe("POST /auth/login", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/auth/login",
+      url: "/v1/auth/login",
       payload: { customer_id: customerId, password: "correct horse battery staple" },
     });
 
@@ -77,12 +77,12 @@ describe("POST /auth/login", () => {
 
     const wrongPassword = await app.inject({
       method: "POST",
-      url: "/auth/login",
+      url: "/v1/auth/login",
       payload: { customer_id: customerId, password: "not-the-password" },
     });
     const unknownCustomer = await app.inject({
       method: "POST",
-      url: "/auth/login",
+      url: "/v1/auth/login",
       payload: { customer_id: "no-such-customer", password: "anything" },
     });
 
@@ -97,7 +97,7 @@ describe("POST /auth/login", () => {
     for (let i = 0; i < config.loginMaxFailedAttempts; i++) {
       const res = await app.inject({
         method: "POST",
-        url: "/auth/login",
+        url: "/v1/auth/login",
         payload: { customer_id: customerId, password: "wrong" },
       });
       expect(res.statusCode).toBe(401);
@@ -105,7 +105,7 @@ describe("POST /auth/login", () => {
 
     const lockedOut = await app.inject({
       method: "POST",
-      url: "/auth/login",
+      url: "/v1/auth/login",
       payload: { customer_id: customerId, password: "the-real-password" },
     });
     expect(lockedOut.statusCode).toBe(401);
@@ -114,10 +114,10 @@ describe("POST /auth/login", () => {
   it("resets the failure counter on a successful login", async () => {
     const { customerId } = await createTestCustomer("the-real-password");
 
-    await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password: "wrong" } });
+    await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password: "wrong" } });
     const success = await app.inject({
       method: "POST",
-      url: "/auth/login",
+      url: "/v1/auth/login",
       payload: { customer_id: customerId, password: "the-real-password" },
     });
     expect(success.statusCode).toBe(200);
@@ -137,10 +137,10 @@ describe("POST /auth/refresh", () => {
 
   it("rotates a valid refresh token and issues a new pair", async () => {
     const { customerId } = await createTestCustomer("pw");
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password: "pw" } });
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password: "pw" } });
     const { refresh_token } = login.json();
 
-    const refreshed = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token } });
+    const refreshed = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token } });
 
     expect(refreshed.statusCode).toBe(200);
     expect(refreshed.json().refresh_token).not.toBe(refresh_token);
@@ -149,33 +149,33 @@ describe("POST /auth/refresh", () => {
 
   it("rejects reuse of an already-rotated token", async () => {
     const { customerId } = await createTestCustomer("pw");
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password: "pw" } });
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password: "pw" } });
     const { refresh_token } = login.json();
 
-    await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token } });
-    const reuse = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token } });
+    await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token } });
+    const reuse = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token } });
 
     expect(reuse.statusCode).toBe(401);
   });
 
   it("reuse of a rotated token revokes the whole family -- the second-generation token stops working too", async () => {
     const { customerId } = await createTestCustomer("pw");
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password: "pw" } });
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password: "pw" } });
     const { refresh_token: gen1 } = login.json();
 
-    const firstRefresh = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: gen1 } });
+    const firstRefresh = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token: gen1 } });
     const { refresh_token: gen2 } = firstRefresh.json();
 
     // Replay the already-superseded gen1 token -- theft-detection path.
-    await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: gen1 } });
+    await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token: gen1 } });
 
     // gen2, the legitimate next-in-chain token, must now be dead too.
-    const usingGen2 = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: gen2 } });
+    const usingGen2 = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token: gen2 } });
     expect(usingGen2.statusCode).toBe(401);
   });
 
   it("rejects an unrecognized token", async () => {
-    const response = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token: "not-a-real-token" } });
+    const response = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token: "not-a-real-token" } });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -185,23 +185,23 @@ describe("POST /auth/logout", () => {
 
   it("revokes the refresh token so it can no longer be used to refresh", async () => {
     const { customerId } = await createTestCustomer("pw");
-    const login = await app.inject({ method: "POST", url: "/auth/login", payload: { customer_id: customerId, password: "pw" } });
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password: "pw" } });
     const { access_token, refresh_token } = login.json();
 
     const logout = await app.inject({
       method: "POST",
-      url: "/auth/logout",
+      url: "/v1/auth/logout",
       headers: { authorization: `Bearer ${access_token}` },
       payload: { refresh_token },
     });
     expect(logout.statusCode).toBe(204);
 
-    const afterLogout = await app.inject({ method: "POST", url: "/auth/refresh", payload: { refresh_token } });
+    const afterLogout = await app.inject({ method: "POST", url: "/v1/auth/refresh", payload: { refresh_token } });
     expect(afterLogout.statusCode).toBe(401);
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "POST", url: "/auth/logout", payload: { refresh_token: "irrelevant" } });
+    const response = await app.inject({ method: "POST", url: "/v1/auth/logout", payload: { refresh_token: "irrelevant" } });
     expect(response.statusCode).toBe(401);
   });
 });

@@ -23,7 +23,7 @@ describe("GET /billers", () => {
 
   it("lists active billers across all categories", async () => {
     const alice = await createTestCustomer(app);
-    const response = await app.inject({ method: "GET", url: "/billers", headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: "/v1/billers", headers: authHeader(alice) });
     expect(response.statusCode).toBe(200);
     const { billers } = response.json() as { billers: { category: string }[] };
     expect(billers.length).toBeGreaterThanOrEqual(6);
@@ -34,7 +34,7 @@ describe("GET /billers", () => {
 
   it("filters by category", async () => {
     const alice = await createTestCustomer(app);
-    const response = await app.inject({ method: "GET", url: "/billers?category=water", headers: authHeader(alice) });
+    const response = await app.inject({ method: "GET", url: "/v1/billers?category=water", headers: authHeader(alice) });
     expect(response.statusCode).toBe(200);
     const { billers } = response.json() as { billers: { category: string }[] };
     expect(billers.length).toBeGreaterThan(0);
@@ -42,7 +42,7 @@ describe("GET /billers", () => {
   });
 
   it("requires a valid access token", async () => {
-    const response = await app.inject({ method: "GET", url: "/billers" });
+    const response = await app.inject({ method: "GET", url: "/v1/billers" });
     expect(response.statusCode).toBe(401);
   });
 });
@@ -57,7 +57,7 @@ describe("POST /bill-payments", () => {
 
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: txUuid, biller_id: biller.id, subscriber_reference: "CTR-445566", amount: "2500", currency: "MAD" },
     });
@@ -75,17 +75,17 @@ describe("POST /bill-payments", () => {
     expect(body.reference).toContain(biller.name);
     expect(body.reference).toContain("CTR-445566");
 
-    const detail = await app.inject({ method: "GET", url: `/bill-payments/${txUuid}`, headers: authHeader(alice) });
+    const detail = await app.inject({ method: "GET", url: `/v1/bill-payments/${txUuid}`, headers: authHeader(alice) });
     expect(detail.statusCode).toBe(200);
     expect(detail.json()).toMatchObject({ tx_uuid: txUuid, subscriber_reference: "CTR-445566", amount: "2500" });
 
     // GET /transfers/:txUuid (same tx_uuid, since settlement reuses
     // bankAdapter.transfer()) flags the counterparty as a biller.
-    const transferDetail = await app.inject({ method: "GET", url: `/transfers/${txUuid}`, headers: authHeader(alice) });
+    const transferDetail = await app.inject({ method: "GET", url: `/v1/transfers/${txUuid}`, headers: authHeader(alice) });
     expect(transferDetail.statusCode).toBe(200);
     expect(transferDetail.json()).toMatchObject({ is_biller: true, biller_category: "electricity" });
 
-    const history = await app.inject({ method: "GET", url: "/accounts/me/transactions", headers: authHeader(alice) });
+    const history = await app.inject({ method: "GET", url: "/v1/accounts/me/transactions", headers: authHeader(alice) });
     const historyRow = (history.json().transactions as { tx_uuid: string }[]).find((t) => t.tx_uuid === txUuid);
     expect(historyRow).toMatchObject({ is_biller: true, biller_category: "electricity" });
   });
@@ -94,7 +94,7 @@ describe("POST /bill-payments", () => {
     const alice = await createTestCustomer(app, { startingBalance: 10_000n });
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: randomUUID(), subscriber_reference: "CTR-1", amount: "100", currency: "MAD" },
     });
@@ -107,7 +107,7 @@ describe("POST /bill-payments", () => {
     const biller = await anyBillerByCategory("water");
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "CTR-2", amount: "5000", currency: "MAD" },
     });
@@ -120,7 +120,7 @@ describe("POST /bill-payments", () => {
     const biller = await anyBillerByCategory("internet");
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "   ", amount: "100", currency: "MAD" },
     });
@@ -132,7 +132,7 @@ describe("POST /bill-payments", () => {
     const biller = await anyBillerByCategory("internet");
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "CTR-3", amount: "0", currency: "MAD" },
     });
@@ -145,13 +145,13 @@ describe("POST /bill-payments", () => {
     const biller = await anyBillerByCategory("electricity");
     const payload = { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "CTR-4", amount: "1000", currency: "MAD" };
 
-    const first = await app.inject({ method: "POST", url: "/bill-payments", headers: authHeader(alice), payload });
-    const second = await app.inject({ method: "POST", url: "/bill-payments", headers: authHeader(alice), payload });
+    const first = await app.inject({ method: "POST", url: "/v1/bill-payments", headers: authHeader(alice), payload });
+    const second = await app.inject({ method: "POST", url: "/v1/bill-payments", headers: authHeader(alice), payload });
 
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
 
-    const balance = await app.inject({ method: "GET", url: "/accounts/me/balance", headers: authHeader(alice) });
+    const balance = await app.inject({ method: "GET", url: "/v1/accounts/me/balance", headers: authHeader(alice) });
     expect(balance.json().available_balance).toBe("9000");
   });
 
@@ -159,7 +159,7 @@ describe("POST /bill-payments", () => {
     const biller = await anyBillerByCategory("water");
     const response = await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       payload: { tx_uuid: randomUUID(), biller_id: biller.id, subscriber_reference: "CTR-5", amount: "100", currency: "MAD" },
     });
     expect(response.statusCode).toBe(401);
@@ -178,24 +178,24 @@ describe("GET /bill-payments", () => {
 
     await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: electricity.id, subscriber_reference: "A-1", amount: "100", currency: "MAD" },
     });
     await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(alice),
       payload: { tx_uuid: randomUUID(), biller_id: water.id, subscriber_reference: "A-2", amount: "200", currency: "MAD" },
     });
     await app.inject({
       method: "POST",
-      url: "/bill-payments",
+      url: "/v1/bill-payments",
       headers: authHeader(mallory),
       payload: { tx_uuid: randomUUID(), biller_id: electricity.id, subscriber_reference: "M-1", amount: "300", currency: "MAD" },
     });
 
-    const firstPage = await app.inject({ method: "GET", url: "/bill-payments?limit=1", headers: authHeader(alice) });
+    const firstPage = await app.inject({ method: "GET", url: "/v1/bill-payments?limit=1", headers: authHeader(alice) });
     expect(firstPage.statusCode).toBe(200);
     const firstBody = firstPage.json() as { bill_payments: { subscriber_reference: string }[]; next_cursor: string | null };
     expect(firstBody.bill_payments).toHaveLength(1);
@@ -203,7 +203,7 @@ describe("GET /bill-payments", () => {
 
     const secondPage = await app.inject({
       method: "GET",
-      url: `/bill-payments?limit=1&before=${encodeURIComponent(firstBody.next_cursor!)}`,
+      url: `/v1/bill-payments?limit=1&before=${encodeURIComponent(firstBody.next_cursor!)}`,
       headers: authHeader(alice),
     });
     const secondBody = secondPage.json() as { bill_payments: { subscriber_reference: string }[] };
