@@ -26,3 +26,15 @@ export function formatDateTime(isoString: string): string {
     minute: "2-digit",
   });
 }
+
+/** Short form (day + month, no year/time) for tight list rows --
+ * `formatDateTime`'s full year+time output is correct for a receipt/
+ * detail screen but too long for a transaction-list row. Ship List v2
+ * Wave 2 Phase 2: `TransactionRow.tsx` previously hand-rolled this exact
+ * `toLocaleDateString` call inline instead of importing a shared
+ * formatter -- factored out here rather than force-fitting the longer
+ * `formatDateTime`, which would have regressed the row's readability. */
+export function formatShortDate(isoString: string): string {
+  const date = new Date(isoString);
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}

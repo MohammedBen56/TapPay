@@ -4,12 +4,12 @@ import { router } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { BILLER_CATEGORY_ICON } from "../design/billerCategory";
 import { colors, type } from "../design/tokens";
-import { formatMAD } from "../design/format";
+import { formatMAD, formatShortDate } from "../design/format";
 
 export function TransactionRow({ tx }: { tx: TransactionSummary }): React.JSX.Element {
   const isCredit = tx.direction === "credit";
   const name = tx.counterparty_name ?? "Unknown";
-  const date = new Date(tx.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  const date = formatShortDate(tx.created_at);
 
   return (
     <Pressable accessibilityRole="button"
@@ -20,7 +20,14 @@ export function TransactionRow({ tx }: { tx: TransactionSummary }): React.JSX.El
         {tx.is_biller && tx.biller_category ? (
           <Ionicons name={BILLER_CATEGORY_ICON[tx.biller_category]} size={18} color={colors.bone} />
         ) : (
-          <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+          // Ship List v2 Wave 2 Phase 1 (font-scale audit): a single-glyph
+          // avatar initial has no reason to scale 1:1 with body text -- an
+          // uncapped multiplier overflows this fixed 40x40 circle at large
+          // system font scales. Capped modestly rather than disabled
+          // entirely, so the setting still has some effect here.
+          <Text style={styles.avatarInitial} maxFontSizeMultiplier={1.3}>
+            {name.charAt(0).toUpperCase()}
+          </Text>
         )}
       </View>
       <View style={styles.middle}>

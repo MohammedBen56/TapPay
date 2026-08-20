@@ -360,7 +360,9 @@ function RecipientSummary({ recipient }: { recipient: Recipient }): React.JSX.El
   return (
     <View style={styles.recipientSummary}>
       <View style={styles.recipientAvatar}>
-        <Text style={styles.recipientAvatarInitial}>{recipient.displayName.charAt(0).toUpperCase()}</Text>
+        <Text style={styles.recipientAvatarInitial} maxFontSizeMultiplier={1.3}>
+          {recipient.displayName.charAt(0).toUpperCase()}
+        </Text>
       </View>
       <View>
         <Text style={styles.recipientName}>{recipient.displayName}</Text>
@@ -449,7 +451,9 @@ function ContactsList({ onChoose }: { onChoose: (r: Recipient) => void }): React
           style={({ pressed }) => [styles.contactRow, pressed && styles.pressed]}
         >
           <View style={styles.recipientAvatar}>
-            <Text style={styles.recipientAvatarInitial}>{b.display_name.charAt(0).toUpperCase()}</Text>
+            <Text style={styles.recipientAvatarInitial} maxFontSizeMultiplier={1.3}>
+              {b.display_name.charAt(0).toUpperCase()}
+            </Text>
           </View>
           <View style={styles.flex1}>
             <Text style={styles.recipientName}>{b.display_name}</Text>
@@ -645,7 +649,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   amountInputWrap: { alignItems: "center" },
-  amountField: { fontFamily: type.hero.family, fontSize: 36, textAlign: "center", height: 72 },
+  // Ship List v2 Wave 2 Phase 1 (font-scale audit): minHeight, not a bare
+  // height -- this is the amount entry field the whole Send flow hinges
+  // on, and a fixed 72px hard-clips the 36px text at large system font
+  // scales (a 2x scale needs ~86px+ of room). minHeight keeps the same
+  // default footprint while letting the field grow instead of clipping.
+  amountField: { fontFamily: type.hero.family, fontSize: 36, textAlign: "center", minHeight: 72 },
   amountPreview: { fontFamily: type.hero.family, fontSize: 36, color: colors.bone, textAlign: "center" },
   fromAccountWrap: { gap: 8 },
   fromAccountLabel: {

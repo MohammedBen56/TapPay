@@ -24,6 +24,13 @@ export default function TabsLayout(): React.JSX.Element {
         tabBarBackground: () => <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />,
         tabBarLabelStyle: styles.label,
         tabBarItemStyle: styles.item,
+        // Ship List v2 Wave 2 Phase 1 (font-scale audit): the bar's height
+        // is a bare constant (62 + inset), not scale-aware -- icon (22) +
+        // item padding (4) + bar padding (8) + a scaled label leaves too
+        // little headroom at large system font scales. The 3-word label
+        // set (Home/Send/Profile) loses little by not scaling; the icons
+        // (unaffected by font scale) stay the primary wayfinding signal.
+        tabBarAllowFontScaling: false,
       }}
     >
       <Tabs.Screen
