@@ -57,6 +57,32 @@ module.exports = {
         },
       ],
       "react-native-nfc-manager",
+      // Ship List v2 Wave 2 Phase 2: Android App Shortcuts (long-press the
+      // launcher icon -> "Send money" / "Pay a bill"). Reuses the existing
+      // adaptive-icon assets/background color rather than new bespoke
+      // per-shortcut art -- a real, working default; a distinct icon per
+      // shortcut is a cheap follow-up once real icon assets exist, not
+      // done here. NOTE: this package's own README only lists verified
+      // compatibility through Expo SDK 54 (this app is on 57) -- `npx
+      // expo install` raised no incompatibility warning and the API
+      // surface is small/stable, but treat this as unverified until a
+      // real native rebuild + device test confirms it, same as every
+      // other mobile change in this engagement without a device run.
+      [
+        "expo-quick-actions",
+        {
+          androidIcons: {
+            send_money: {
+              foregroundImage: "./assets/android-icon-foreground.png",
+              backgroundColor: "#E6F4FE",
+            },
+            pay_bills: {
+              foregroundImage: "./assets/android-icon-foreground.png",
+              backgroundColor: "#E6F4FE",
+            },
+          },
+        },
+      ],
     ],
   },
 };

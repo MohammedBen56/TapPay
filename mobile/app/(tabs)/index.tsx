@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -51,6 +52,7 @@ export default function HomeScreen(): React.JSX.Element {
   );
 
   const toggleVisible = (): void => {
+    void Haptics.selectionAsync();
     const next = !visible;
     setVisible(next);
     void setBalanceVisible(next);

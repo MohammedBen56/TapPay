@@ -1,6 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
+import * as QuickActions from "expo-quick-actions";
+import { useQuickActionRouting, type RouterAction } from "expo-quick-actions/router";
+import { useEffect } from "react";
 import { StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, type } from "../../src/design/tokens";
@@ -13,6 +16,18 @@ function TabIcon({ name, focused }: { name: IconName; focused: boolean }): React
 
 export default function TabsLayout(): React.JSX.Element {
   const insets = useSafeAreaInsets();
+
+  // Ship List v2 Wave 2 Phase 2: Android App Shortcuts. This hook must
+  // live in a sub-layout route (here, the signed-in tab layout), not the
+  // root layout -- it navigates on invocation, and only makes sense once
+  // signed in anyway (both shortcut destinations are authed screens).
+  useQuickActionRouting();
+  useEffect(() => {
+    void QuickActions.setItems<RouterAction>([
+      { id: "send-money", title: "Send money", icon: "send_money", params: { href: "/(tabs)/send" } },
+      { id: "pay-bills", title: "Pay a bill", icon: "pay_bills", params: { href: "/bills" } },
+    ]);
+  }, []);
 
   return (
     <Tabs

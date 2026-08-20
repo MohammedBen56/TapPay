@@ -38,3 +38,12 @@ export function formatShortDate(isoString: string): string {
   const date = new Date(isoString);
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
+
+/** Long form (full month name + year, no time) for formal documents --
+ * the statement/proof-of-balance letter headers. A third distinct
+ * hand-rolled `toLocaleDateString` call found during the same Wave 2
+ * consolidation pass, factored out here too rather than left inline. */
+export function formatLongDate(isoString: string): string {
+  const date = new Date(isoString);
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+}

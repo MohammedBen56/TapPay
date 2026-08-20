@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -30,7 +31,17 @@ export default function BillersScreen(): React.JSX.Element {
   return (
     <ScreenBackground>
       <View style={styles.container}>
-        <SegmentedControl options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
+        <SegmentedControl
+          options={FILTER_OPTIONS}
+          value={filter}
+          onChange={(next) => {
+            // Ship List v2 Wave 2 Phase 2: this filter had no selection
+            // haptic, unlike every other SegmentedControl-driven choice
+            // in the app (Profile's method switch, etc.).
+            void Haptics.selectionAsync();
+            setFilter(next);
+          }}
+        />
 
         <FlashList
           data={billers}

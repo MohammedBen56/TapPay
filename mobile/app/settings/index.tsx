@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { useState } from "react";
+import * as Haptics from "expo-haptics";
 import * as LocalAuthentication from "expo-local-authentication";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { api } from "../../src/api/endpoints";
@@ -58,7 +59,9 @@ export default function SettingsScreen(): React.JSX.Element {
     try {
       await api.openAccount({ account_type: "savings" });
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setOpenSavingsError(err instanceof ApiError ? err.message : "Couldn't open a savings account -- try again.");
     } finally {
       setOpeningSavings(false);
@@ -66,6 +69,7 @@ export default function SettingsScreen(): React.JSX.Element {
   };
 
   const handleToggleBiometric = async (next: boolean): Promise<void> => {
+    void Haptics.selectionAsync();
     setBiometricError(null);
     if (!next) {
       setBiometricBusy(true);

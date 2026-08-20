@@ -23,6 +23,7 @@
     "expo-local-authentication": "~57.0.2",
     "expo-modules-core": "~57.0.6",
     "expo-print": "~57.0.1",
+    "expo-quick-actions": "^6.0.2",
     "expo-router": "~57.0.12",
     "expo-secure-store": "~57.0.1",
     "expo-sharing": "~57.0.11",

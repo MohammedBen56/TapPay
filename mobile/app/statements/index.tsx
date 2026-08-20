@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import * as Haptics from "expo-haptics";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useMemo, useState } from "react";
@@ -13,7 +14,7 @@ import { ScreenBackground } from "../../src/components/ScreenBackground";
 import { SegmentedControl } from "../../src/components/SegmentedControl";
 import { TextField } from "../../src/components/TextField";
 import { colors, radius, type } from "../../src/design/tokens";
-import { formatDateTime, formatMAD, formatRibGrouped } from "../../src/design/format";
+import { formatDateTime, formatLongDate, formatMAD, formatRibGrouped } from "../../src/design/format";
 
 type Preset = "30d" | "3m" | "6m" | "ytd" | "custom";
 
@@ -84,7 +85,9 @@ export default function StatementsScreen(): React.JSX.Element {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share statement" });
       }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Couldn't generate statement", "Something went wrong. Try again.");
     } finally {
       setStatementBusy(false);
@@ -103,7 +106,9 @@ export default function StatementsScreen(): React.JSX.Element {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share proof of balance" });
       }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Couldn't generate letter", "Something went wrong. Try again.");
     } finally {
       setLetterBusy(false);
@@ -213,7 +218,7 @@ function proofOfBalanceHtml(args: {
   currency: string;
   reference: string;
 }): string {
-  const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  const today = formatLongDate(new Date().toISOString());
   return `
     <html>
       <body style="font-family: -apple-system, Helvetica, Arial, sans-serif; background:${colors.ground}; color:${colors.bone}; padding:48px;">

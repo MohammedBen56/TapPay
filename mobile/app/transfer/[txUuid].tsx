@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
+import * as Haptics from "expo-haptics";
 import * as Print from "expo-print";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
@@ -32,7 +33,9 @@ export default function TransferDetailScreen(): React.JSX.Element {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: "image/png", dialogTitle: "Share receipt" });
       }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Couldn't share", "Something went wrong capturing the receipt.");
     } finally {
       setBusy(null);
@@ -48,7 +51,9 @@ export default function TransferDetailScreen(): React.JSX.Element {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Share receipt" });
       }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Couldn't share", "Something went wrong generating the PDF.");
     } finally {
       setBusy(null);

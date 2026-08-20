@@ -1,3 +1,4 @@
+import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text } from "react-native";
 import { ApiError } from "../../src/api/client";
@@ -34,10 +35,12 @@ export default function ChangePasswordScreen(): React.JSX.Element {
     setSubmitting(true);
     try {
       await api.changePassword({ current_password: currentPassword, new_password: newPassword });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // The server just revoked every session, including this one -- sign
       // out locally and let the user sign back in with the new password.
       await logout();
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setError(err instanceof ApiError ? err.message : "Couldn't change your password -- check your connection and try again.");
       setSubmitting(false);
     }

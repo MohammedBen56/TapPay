@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
@@ -34,16 +35,27 @@ export default function SignInScreen(): React.JSX.Element {
   const handlePasswordSignIn = async (): Promise<void> => {
     if (!customerId.trim() || !password) return;
     setSubmitting(true);
-    await loginWithPassword(customerId.trim(), password);
+    const ok = await loginWithPassword(customerId.trim(), password);
     setSubmitting(false);
     setPassword("");
+    // Ship List v2 Wave 2 Phase 2 (haptics consolidation): sign-in had
+    // success feedback nowhere and no error haptic at all -- the two
+    // other money-moving/settlement-shaped success paths (Send, bill
+    // pay) already fire Success/Error notification haptics; login is the
+    // same class of "did this critical action actually work" moment.
+    void Haptics.notificationAsync(ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error);
   };
 
   const handleBiometricSignIn = async (): Promise<void> => {
     setBiometricSubmitting(true);
     const ok = await loginWithBiometric();
     setBiometricSubmitting(false);
-    if (!ok) setUsePasswordEntry(true);
+    if (!ok) {
+      setUsePasswordEntry(true);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } else {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
   };
 
   const handleEnableBiometric = async (): Promise<void> => {
