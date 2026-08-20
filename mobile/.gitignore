@@ -18,6 +18,13 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Release signing (Ship List v2 Phase 7) -- the keystore itself is already
+# covered by *.jks above; credentials.json is EAS's local-credentials
+# manifest and carries the keystore password/alias in plaintext, generated
+# locally by scripts/generate-release-keystore.sh, never committed.
+/credentials.json
+/credentials/
+
 # Metro
 .metro-health-check*
 
