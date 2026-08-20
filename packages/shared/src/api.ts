@@ -148,7 +148,19 @@ export interface MeResponse {
   rib: string;
   iban: string;
   currency: string;
+  /** Ship List v2 Wave 2 Phase 5 -- a per-identity preference, not
+   * per-account (unaffected by which account_id was queried). */
+  round_up_enabled: boolean;
 }
+
+// ---- PATCH /me (Ship List v2 Wave 2 Phase 5) ----
+
+export interface UpdateMeRequest {
+  round_up_enabled: boolean;
+}
+// Response: MeResponse (the account_id/account_type/rib/etc. fields are
+// resolved the same way GET /me's are -- the caller's checking account,
+// since PATCH /me takes no ?account_id=).
 
 // ---- GET /accounts/me/balance ----
 
@@ -411,3 +423,53 @@ export interface BillPaymentsQuery {
 // ---- GET /bill-payments/:txUuid ----
 
 export type BillPaymentDetailResponse = BillPaymentSummary;
+
+// ---- Financial goals/vaults (Ship List v2 Wave 2 Phase 5) ----
+// A goal earmarks an amount inside the customer's ONE real savings
+// account -- it is not a separate ledger account, so funding a goal is a
+// pure bookkeeping increment, never a transfer (server/migrations/
+// 026_goals.cjs's own comment has the full reasoning).
+
+export interface Goal {
+  id: string;
+  name: string;
+  /** Minor-units decimal string. */
+  target_amount: string;
+  /** Minor-units decimal string. */
+  saved_amount: string;
+  target_date: string | null;
+  created_at: string;
+}
+
+export interface GoalsResponse {
+  goals: Goal[];
+}
+
+export interface CreateGoalRequest {
+  name: string;
+  target_amount: string;
+  target_date?: string;
+}
+
+export interface FundGoalRequest {
+  amount: string;
+}
+
+// ---- GET /subscriptions (Ship List v2 Wave 2 Phase 5) ----
+// Pure read-only pattern detection over existing transfer history -- no
+// write path, no new stored data. See server/src/routes/subscriptions.ts.
+
+export interface DetectedSubscription {
+  counterparty_account_id: string;
+  counterparty_name: string | null;
+  /** Minor-units decimal string. */
+  amount: string;
+  currency: string;
+  occurrences: number;
+  last_paid_at: string;
+  average_interval_days: number;
+}
+
+export interface SubscriptionsResponse {
+  subscriptions: DetectedSubscription[];
+}

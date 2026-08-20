@@ -14,6 +14,20 @@ pg.types.setTypeParser(20, BigInt);
 // decimals-as-float" (CLAUDE.md §5) actually requires for balance aggregates.
 pg.types.setTypeParser(1700, BigInt);
 
+// DATE (oid 1082, first used by goals.target_date -- 026_goals.cjs) comes
+// back from `pg` as a JS Date object by default, constructed at LOCAL
+// midnight -- serializing it back out (Fastify's JSON reply calls
+// Date.prototype.toJSON, i.e. toISOString) then re-expresses that instant
+// in UTC, which silently shifts the calendar date backward by a day for
+// any server timezone ahead of UTC. Found live: a goal saved with
+// target_date "2027-06-01" came back as "2027-05-31T23:00:00.000Z" on a
+// UTC+1 host. A DATE column here is never a timestamp -- it's an exact
+// calendar day with no time-of-day meaning -- so the fix is the same
+// "don't reinterpret through a lossy intermediate type" rule already
+// applied to money above: return the raw `YYYY-MM-DD` string Postgres
+// sends, verbatim.
+pg.types.setTypeParser(1082, (value: string) => value);
+
 // Mirrors the nil-UUID mint account inserted by migrations/001_accounts.cjs.
 export const MINT_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -29,6 +43,9 @@ export interface UsersTable {
   email: string;
   display_name: string | null;
   created_at: Generated<Date>;
+  /** Ship List v2 Wave 2 Phase 5 (025_round_up.cjs): opt-in round-up
+   * savings preference. See server/src/roundup.ts. */
+  round_up_enabled: Generated<boolean>;
 }
 
 export interface AccountsTable {
@@ -222,6 +239,21 @@ export interface KnownDevicesTable {
   last_seen_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 5 (026_goals.cjs): a display/tracking layer
+ * over money already sitting in the customer's ONE savings account --
+ * deliberately not a real ledger sub-account. See the migration's own
+ * comment for why, and server/src/routes/goals.ts for the fund/progress
+ * logic. */
+export interface GoalsTable {
+  id: Generated<string>;
+  owner_user_id: string;
+  name: string;
+  target_amount: bigint;
+  saved_amount: Generated<bigint>;
+  target_date: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   users: UsersTable;
   accounts: AccountsTable;
@@ -238,6 +270,7 @@ export interface Database {
   audit_log: AuditLogTable;
   settlement_events: SettlementEventsTable;
   known_devices: KnownDevicesTable;
+  goals: GoalsTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

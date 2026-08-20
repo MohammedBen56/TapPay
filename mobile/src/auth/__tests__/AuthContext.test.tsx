@@ -88,6 +88,7 @@ const FAKE_ME: MeResponse = {
   rib: "999780000000000000100113",
   iban: "MA37999780000000000000100113",
   currency: "MAD",
+  round_up_enabled: false,
 };
 
 const FAKE_LOGIN: LoginResponse = {

@@ -37,10 +37,11 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ZodTypeAny } from "zod";
 import { changePasswordBodySchema, loginBodySchema, logoutBodySchema, refreshBodySchema } from "./routes/auth.js";
 import { openAccountBodySchema } from "./routes/accounts.js";
-import { accountIdQuerySchema, statementQuerySchema, transactionsQuerySchema } from "./routes/me.js";
+import { accountIdQuerySchema, statementQuerySchema, transactionsQuerySchema, updateMeBodySchema } from "./routes/me.js";
 import { transferBodySchema } from "./routes/transfers.js";
 import { createBodySchema as createBeneficiaryBodySchema, updateBodySchema as updateBeneficiaryBodySchema } from "./routes/beneficiaries.js";
 import { billPaymentsQuerySchema, categoryQuerySchema, payBillBodySchema } from "./routes/billPayments.js";
+import { createGoalBodySchema, fundGoalBodySchema } from "./routes/goals.js";
 
 function bodyFrom(schema: ZodTypeAny): OpenAPIV3.RequestBodyObject {
   return {
@@ -175,6 +176,14 @@ export function buildOpenApiDocument(): OpenAPIV3.Document {
           tags: ["me"],
           security: bearerAuth,
           parameters: queryParamsFrom(accountIdQuerySchema),
+          responses: { "200": { description: "MeResponse" } },
+        },
+        patch: {
+          operationId: "updateMe",
+          summary: "Toggle the caller's own round-up savings preference",
+          tags: ["me"],
+          security: bearerAuth,
+          requestBody: bodyFrom(updateMeBodySchema),
           responses: { "200": { description: "MeResponse" } },
         },
       },
@@ -337,6 +346,55 @@ export function buildOpenApiDocument(): OpenAPIV3.Document {
           security: bearerAuth,
           parameters: [{ name: "txUuid", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
           responses: { "200": { description: "BillPaymentDetailResponse" }, "404": { description: "not found for the caller's own account" } },
+        },
+      },
+      "/goals": {
+        get: {
+          operationId: "listGoals",
+          summary: "List the signed-in customer's financial goals",
+          tags: ["goals"],
+          security: bearerAuth,
+          responses: { "200": { description: "GoalsResponse" } },
+        },
+        post: {
+          operationId: "createGoal",
+          summary: "Create a financial goal",
+          description: "A goal earmarks an amount inside the customer's one real savings account -- it is not a separate ledger account.",
+          tags: ["goals"],
+          security: bearerAuth,
+          requestBody: bodyFrom(createGoalBodySchema),
+          responses: { "201": { description: "Goal" } },
+        },
+      },
+      "/goals/{id}/fund": {
+        post: {
+          operationId: "fundGoal",
+          summary: "Increment a goal's saved_amount (bookkeeping only -- no money movement)",
+          tags: ["goals"],
+          security: bearerAuth,
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          requestBody: bodyFrom(fundGoalBodySchema),
+          responses: { "200": { description: "Goal" }, "404": { description: "not found for the caller's own account" } },
+        },
+      },
+      "/goals/{id}": {
+        delete: {
+          operationId: "deleteGoal",
+          summary: "Delete a financial goal",
+          tags: ["goals"],
+          security: bearerAuth,
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "204": { description: "deleted" }, "404": { description: "not found for the caller's own account" } },
+        },
+      },
+      "/subscriptions": {
+        get: {
+          operationId: "listSubscriptions",
+          summary: "Detected recurring payments (read-only pattern detection, no new stored data)",
+          tags: ["subscriptions"],
+          security: bearerAuth,
+          parameters: queryParamsFrom(accountIdQuerySchema),
+          responses: { "200": { description: "SubscriptionsResponse" } },
         },
       },
     },

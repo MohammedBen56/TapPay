@@ -10,9 +10,13 @@ import type {
   ChangePasswordRequest,
   CreateBeneficiaryRequest,
   CreateBeneficiaryResponse,
+  CreateGoalRequest,
   CreateTransferRequest,
   CreateTransferResponse,
   DataExportResponse,
+  FundGoalRequest,
+  Goal,
+  GoalsResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
@@ -30,11 +34,13 @@ import type {
   StatementResponse,
   StepUpRequest,
   StepUpResponse,
+  SubscriptionsResponse,
   TransactionsQuery,
   TransactionsResponse,
   TransferDetailResponse,
   UpdateBeneficiaryRequest,
   UpdateBeneficiaryResponse,
+  UpdateMeRequest,
 } from "@tappay/shared";
 import { getDeviceId } from "../auth/deviceId";
 import { apiRequest } from "./client";
@@ -83,6 +89,7 @@ export const api = {
   openAccount: (body: OpenAccountRequest) => apiRequest<OpenAccountResponse>("/accounts", { method: "POST", body }),
 
   me: (params?: MeQuery) => apiRequest<MeResponse>(`/me${accountQuery(params)}`),
+  updateMe: (body: UpdateMeRequest) => apiRequest<MeResponse>("/me", { method: "PATCH", body }),
   dataExport: (params?: MeQuery) => apiRequest<DataExportResponse>(`/me/data-export${accountQuery(params)}`),
   balance: (params?: BalanceQuery) => apiRequest<BalanceResponse>(`/accounts/me/balance${accountQuery(params)}`),
   transactions: (params?: TransactionsQuery) => apiRequest<TransactionsResponse>(`/accounts/me/transactions${query(params)}`),
@@ -108,4 +115,11 @@ export const api = {
   payBill: (body: PayBillRequest) => apiRequest<PayBillResponse>("/bill-payments", { method: "POST", body }),
   billPayments: (params?: BillPaymentsQuery) => apiRequest<BillPaymentsResponse>(`/bill-payments${billPaymentsQuery(params)}`),
   billPayment: (txUuid: string) => apiRequest<BillPaymentDetailResponse>(`/bill-payments/${encodeURIComponent(txUuid)}`),
+
+  goals: () => apiRequest<GoalsResponse>("/goals"),
+  createGoal: (body: CreateGoalRequest) => apiRequest<Goal>("/goals", { method: "POST", body }),
+  fundGoal: (id: string, body: FundGoalRequest) => apiRequest<Goal>(`/goals/${encodeURIComponent(id)}/fund`, { method: "POST", body }),
+  deleteGoal: (id: string) => apiRequest<void>(`/goals/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  subscriptions: () => apiRequest<SubscriptionsResponse>("/subscriptions"),
 };

@@ -19,8 +19,10 @@ import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBeneficiaryRoutes } from "./routes/beneficiaries.js";
 import { registerBillPaymentRoutes } from "./routes/billPayments.js";
+import { registerGoalRoutes } from "./routes/goals.js";
 import { registerLookupRoutes } from "./routes/lookup.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerSubscriptionRoutes } from "./routes/subscriptions.js";
 import { registerTransferRoutes } from "./routes/transfers.js";
 import { registerTxRoutes } from "./routes/tx.js";
 
@@ -204,6 +206,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         registerLookupRoutes(v1);
         registerBeneficiaryRoutes(v1);
         registerBillPaymentRoutes(v1);
+        registerGoalRoutes(v1);
+        registerSubscriptionRoutes(v1);
       },
       { prefix: "/v1" },
     );

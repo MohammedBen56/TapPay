@@ -7,6 +7,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { api } from "../../src/api/endpoints";
 import { ApiError } from "../../src/api/client";
+import { meQueryOptions } from "../../src/api/queries";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Card } from "../../src/components/Card";
 import { GlassButton } from "../../src/components/GlassButton";
@@ -52,6 +53,26 @@ export default function SettingsScreen(): React.JSX.Element {
   const hasSavings = accountsQuery.data?.accounts.some((a) => a.account_type === "savings") ?? false;
   const [openingSavings, setOpeningSavings] = useState(false);
   const [openSavingsError, setOpenSavingsError] = useState<string | null>(null);
+
+  // Ship List v2 Wave 2 Phase 5.
+  const meQuery = useQuery(meQueryOptions);
+  const [roundUpBusy, setRoundUpBusy] = useState(false);
+  const [roundUpError, setRoundUpError] = useState<string | null>(null);
+
+  const handleToggleRoundUp = async (next: boolean): Promise<void> => {
+    setRoundUpError(null);
+    setRoundUpBusy(true);
+    try {
+      await api.updateMe({ round_up_enabled: next });
+      void Haptics.selectionAsync();
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setRoundUpError(err instanceof ApiError ? err.message : "Couldn't update round-up savings -- try again.");
+    } finally {
+      setRoundUpBusy(false);
+    }
+  };
 
   const handleOpenSavings = async (): Promise<void> => {
     setOpenSavingsError(null);
@@ -136,25 +157,57 @@ export default function SettingsScreen(): React.JSX.Element {
           />
         </Card>
 
-        {!hasSavings && (
-          <>
-            <Text style={styles.sectionLabel}>Accounts</Text>
-            <Card style={styles.card}>
-              <Text style={styles.disclosure}>
-                Open a savings account to keep money separate and earn interest on it, with instant transfers to and
-                from checking.
-              </Text>
-              {openSavingsError ? <Text style={styles.errorText}>{openSavingsError}</Text> : null}
-              <GlassButton
-                label="Open savings account"
-                variant="ghost"
-                onPress={() => void handleOpenSavings()}
-                loading={openingSavings}
-                style={styles.openSavingsButton}
+        <Text style={styles.sectionLabel}>Accounts</Text>
+        {!hasSavings ? (
+          <Card style={styles.card}>
+            <Text style={styles.disclosure}>
+              Open a savings account to keep money separate and earn interest on it, with instant transfers to and
+              from checking.
+            </Text>
+            {openSavingsError ? <Text style={styles.errorText}>{openSavingsError}</Text> : null}
+            <GlassButton
+              label="Open savings account"
+              variant="ghost"
+              onPress={() => void handleOpenSavings()}
+              loading={openingSavings}
+              style={styles.openSavingsButton}
+            />
+          </Card>
+        ) : (
+          <Card style={styles.card}>
+            <View style={styles.toggleRow}>
+              <View style={styles.rowIcon}>
+                <Ionicons name="arrow-up-circle-outline" size={18} color={colors.bone} />
+              </View>
+              <View style={styles.rowMiddle}>
+                <Text style={styles.rowLabel}>Round-up savings</Text>
+                <Text style={styles.rowSublabel}>Round sends up to the next MAD, sweep the difference to savings</Text>
+              </View>
+              <Switch
+                value={meQuery.data?.round_up_enabled ?? false}
+                onValueChange={(next) => void handleToggleRoundUp(next)}
+                disabled={roundUpBusy || !meQuery.data}
+                accessibilityLabel="Round-up savings"
+                accessibilityHint={
+                  meQuery.data?.round_up_enabled ? "Turns off round-up savings" : "Turns on round-up savings"
+                }
               />
-            </Card>
-          </>
+            </View>
+            {roundUpError ? <Text style={styles.errorText}>{roundUpError}</Text> : null}
+            <View style={styles.divider} />
+            <SettingsRow icon="flag-outline" label="Goals" sublabel="Track savings toward something specific" onPress={() => router.push("/goals")} />
+          </Card>
         )}
+
+        <Text style={styles.sectionLabel}>Insights</Text>
+        <Card style={styles.card}>
+          <SettingsRow
+            icon="repeat-outline"
+            label="Subscriptions"
+            sublabel="Recurring payments we've noticed"
+            onPress={() => router.push("/subscriptions")}
+          />
+        </Card>
 
         <Text style={styles.sectionLabel}>Documents</Text>
         <Card style={styles.card}>

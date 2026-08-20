@@ -6,6 +6,7 @@ import { recordAudit } from "../audit/log.js";
 import { config } from "../config.js";
 import { db } from "../db/kysely.js";
 import { billPaymentTotal } from "../metrics.js";
+import { maybeSweepRoundUp } from "../roundup.js";
 import { createCursorCodec } from "./cursor.js";
 import { accountScopedRateLimitedPreHandlers, echoIdempotencyKey, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
@@ -115,6 +116,14 @@ export function registerBillPaymentRoutes(app: FastifyInstance): void {
     billPaymentTotal.inc({ outcome: "settled" });
     await recordAudit({ userId, action: "bill_payment.settle", resourceType: "bill_payment", resourceId: tx_uuid, ip: request.ip });
     echoIdempotencyKey(request, reply, tx_uuid);
+
+    // Ship List v2 Wave 2 Phase 5: same opt-in round-up sweep transfers.ts
+    // runs -- best-effort, never fails this already-successful settlement.
+    try {
+      await maybeSweepRoundUp({ userId, fromAccountId, originalTxUuid: tx_uuid, debitedAmount: amountMinor, currency });
+    } catch (err) {
+      request.log.error(err, "round-up sweep failed (non-fatal, original bill payment already settled)");
+    }
 
     const [, balance] = await Promise.all([
       db

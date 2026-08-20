@@ -47,3 +47,28 @@ export async function resolveOwnedAccount(userId: string, requestedAccountId?: s
   const row = await query.executeTakeFirst();
   return row ?? null;
 }
+
+/** Ship List v2 Wave 2 Phase 5: resolves the caller's account of a SPECIFIC
+ * type (e.g. "does this user have a savings account, and if so what's its
+ * id") -- distinct from resolveOwnedAccount's "which of my accounts does
+ * this request mean" (client-supplied id or default-to-checking). Used by
+ * roundup.ts, which needs the savings account regardless of what account
+ * the triggering transfer itself used. Returns null if the user has no
+ * account of that type yet (e.g. never opened savings). */
+export async function resolveAccountByType(userId: string, accountType: AccountType): Promise<OwnedAccount | null> {
+  const row = await db
+    .selectFrom("accounts")
+    .innerJoin("users", "users.user_id", "accounts.user_id")
+    .select([
+      "accounts.account_id as account_id",
+      "accounts.account_type as account_type",
+      "accounts.rib as rib",
+      "accounts.currency as currency",
+      "users.display_name as display_name",
+      "accounts.created_at as created_at",
+    ])
+    .where("accounts.user_id", "=", userId)
+    .where("accounts.account_type", "=", accountType)
+    .executeTakeFirst();
+  return row ?? null;
+}

@@ -355,4 +355,13 @@ export const config = {
    * session, not just /transfers in isolation, with no extra wiring
    * needed in billPayments.ts. Default: 50,000.00 MAD/24h. */
   dailyVelocityCapMinorUnits: BigInt(envInt("DAILY_VELOCITY_CAP_MINOR_UNITS", 5_000_000)),
+
+  // ---- Ship List v2 Wave 2 Phase 5 (money features unblocked by savings) ----
+
+  /** Round-up savings (opt-in, `users.round_up_enabled`): a checking-
+   * account debit is rounded UP to the next multiple of this many minor
+   * units, and the difference is swept into the customer's savings
+   * account as an ordinary internal transfer (roundup.ts). Default: 100
+   * minor units (round up to the next whole 1.00 MAD). */
+  roundUpToMinorUnits: BigInt(envInt("ROUND_UP_TO_MINOR_UNITS", 100)),
 } as const;

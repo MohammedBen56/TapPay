@@ -36,6 +36,9 @@ export const transactionsQuerySchema = accountIdQuerySchema.extend({
   before: z.string().optional(),
 });
 
+// Ship List v2 Wave 2 Phase 5.
+export const updateMeBodySchema = z.object({ round_up_enabled: z.boolean() });
+
 export const statementQuerySchema = accountIdQuerySchema
   .extend({
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "from must be YYYY-MM-DD"),
@@ -79,6 +82,8 @@ export function registerMeRoutes(app: FastifyInstance): void {
       return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
     }
 
+    const user = await db.selectFrom("users").select(["round_up_enabled"]).where("user_id", "=", userId).executeTakeFirstOrThrow();
+
     return reply.send({
       customer_id: customerId,
       display_name: account.display_name,
@@ -87,6 +92,42 @@ export function registerMeRoutes(app: FastifyInstance): void {
       rib: account.rib,
       iban: ribToIban(account.rib),
       currency: account.currency,
+      round_up_enabled: user.round_up_enabled,
+    });
+  });
+
+  // Ship List v2 Wave 2 Phase 5: toggles the caller's own round-up savings
+  // preference (roundup.ts). A per-identity preference, not per-account --
+  // no ?account_id= to resolve, unlike every GET above.
+  app.patch("/me", { preHandler: [app.authenticate] }, async (request, reply) => {
+    const parsed = updateMeBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const { sub: userId, cid: customerId } = request.user;
+
+    await db.updateTable("users").set({ round_up_enabled: parsed.data.round_up_enabled }).where("user_id", "=", userId).execute();
+    await recordAudit({
+      userId,
+      action: "user.round_up_toggle",
+      resourceType: "account",
+      resourceId: parsed.data.round_up_enabled ? "on" : "off",
+      ip: request.ip,
+    });
+
+    const account = await resolveOwnedAccount(userId);
+    if (!account || !account.rib || !account.display_name) {
+      return reply.status(404).send({ error: "IncompleteProfile", message: "account profile is missing required fields" });
+    }
+    return reply.send({
+      customer_id: customerId,
+      display_name: account.display_name,
+      account_id: account.account_id,
+      account_type: account.account_type,
+      rib: account.rib,
+      iban: ribToIban(account.rib),
+      currency: account.currency,
+      round_up_enabled: parsed.data.round_up_enabled,
     });
   });
 

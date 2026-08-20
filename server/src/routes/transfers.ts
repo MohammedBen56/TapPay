@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { withAccountAdvisoryLock } from "../db/advisoryLock.js";
 import { db } from "../db/kysely.js";
 import { transferTotal } from "../metrics.js";
+import { maybeSweepRoundUp } from "../roundup.js";
 import { resolveOwnedAccount } from "./accountSelection.js";
 import { accountScopedRateLimitedPreHandlers, echoIdempotencyKey, sendSettlementFailure } from "./settlementRouteHelpers.js";
 
@@ -215,6 +216,15 @@ export function registerTransferRoutes(app: FastifyInstance): void {
       transferTotal.inc({ outcome: "settled" });
       await recordAudit({ userId, action: "transfer.settle", resourceType: "transfer", resourceId: tx_uuid, ip: request.ip });
       echoIdempotencyKey(request, reply, tx_uuid);
+
+      // Ship List v2 Wave 2 Phase 5: opt-in round-up savings -- best-effort,
+      // never lets a sweep failure fail this already-successful transfer's
+      // own response (roundup.ts's own doc comment has the full reasoning).
+      try {
+        await maybeSweepRoundUp({ userId, fromAccountId, originalTxUuid: tx_uuid, debitedAmount: amountMinor, currency });
+      } catch (err) {
+        request.log.error(err, "round-up sweep failed (non-fatal, original transfer already settled)");
+      }
 
       const [balance, counterparty] = await Promise.all([
         bankAdapter.getAvailableBalance(fromAccountId, currency),
