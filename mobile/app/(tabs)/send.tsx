@@ -65,6 +65,15 @@ export default function SendScreen(): React.JSX.Element {
   const [savingContact, setSavingContact] = useState(false);
   const [contactSaved, setContactSaved] = useState(false);
 
+  // Ship List v2 Wave 2 Phase 4: the server, not this screen, decides
+  // whether an amount needs step-up (config.ts's stepUpThresholdMinorUnits)
+  // -- rather than mirroring that number here (a drift risk CLAUDE.md
+  // already flags for api.ts's hand-kept-in-sync DTOs), this screen just
+  // submits normally and reacts to a real StepUpRequired response by
+  // prompting for the password and retrying with a bound step_up_token.
+  const [stepUpRequired, setStepUpRequired] = useState(false);
+  const [stepUpPassword, setStepUpPassword] = useState("");
+
   // Ship List v2 Phase 8: shown only once a savings account exists --
   // otherwise this stays undefined and the backend's own default (checking)
   // applies, identical to pre-Phase-8 behavior.
@@ -88,10 +97,34 @@ export default function SendScreen(): React.JSX.Element {
     setSettledAmount(null);
     setSettledTxUuid(null);
     setContactSaved(false);
+    setStepUpRequired(false);
+    setStepUpPassword("");
     txUuidRef.current = uuidv4();
   }, []);
 
+  // "Latest ref" pattern: hardwareBackPress's handler below is only
+  // re-subscribed when `goBack`'s identity changes, not on every step
+  // change, but needs the CURRENT step (and step-up sub-state) when it
+  // fires -- synced via effect rather than a direct-render write, same
+  // pattern as AuthContext.tsx's statusRef.
+  const stepRef = useRef(step);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+  const stepUpRequiredRef = useRef(stepUpRequired);
+  useEffect(() => {
+    stepUpRequiredRef.current = stepUpRequired;
+  }, [stepUpRequired]);
+
   const goBack = useCallback((): void => {
+    // Step out of the step-up password prompt first -- it's a sub-state of
+    // "review", not a step of its own, so back should undo it before
+    // leaving the review step entirely.
+    if (stepUpRequiredRef.current) {
+      setStepUpRequired(false);
+      setStepUpPassword("");
+      return;
+    }
     setStep((current) => {
       if (current === "amount") return "recipient";
       if (current === "reference") return "amount";
@@ -99,16 +132,6 @@ export default function SendScreen(): React.JSX.Element {
       return current;
     });
   }, []);
-
-  // "Latest ref" pattern: hardwareBackPress's handler below is only
-  // re-subscribed when `goBack`'s identity changes, not on every step
-  // change, but needs the CURRENT step when it fires -- synced via effect
-  // rather than a direct-render write, same pattern as AuthContext.tsx's
-  // statusRef.
-  const stepRef = useRef(step);
-  useEffect(() => {
-    stepRef.current = step;
-  }, [step]);
 
   // Android hardware back / gesture nav: while mid-flow, step back through
   // the wizard instead of leaving the tab (the bottom-tabs navigator's
@@ -167,7 +190,7 @@ export default function SendScreen(): React.JSX.Element {
     }
   };
 
-  const handleConfirmSend = async (): Promise<void> => {
+  const handleConfirmSend = async (stepUpToken?: string): Promise<void> => {
     if (!recipient) return;
     setSubmitError(null);
 
@@ -183,6 +206,7 @@ export default function SendScreen(): React.JSX.Element {
         currency: "MAD",
         reference: referenceInput.trim(),
         from_account_id: fromAccountId,
+        step_up_token: stepUpToken,
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Prefix match invalidates every account's balance/transactions --
@@ -194,8 +218,29 @@ export default function SendScreen(): React.JSX.Element {
       setSettledTxUuid(result.tx_uuid);
       setStep("success");
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Couldn't send -- check your connection and try again.");
+      if (err instanceof ApiError && err.code === "StepUpRequired") {
+        // Same tx_uuid on retry (CLAUDE.md §5's idempotency invariant) --
+        // this isn't a new transfer attempt, just the same one now
+        // carrying proof of a fresh password re-entry.
+        setStepUpRequired(true);
+      } else {
+        setSubmitError(err instanceof ApiError ? err.message : "Couldn't send -- check your connection and try again.");
+      }
     } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStepUpAndRetry = async (): Promise<void> => {
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const { step_up_token } = await api.stepUp({ password: stepUpPassword, tx_uuid: txUuidRef.current });
+      setStepUpRequired(false);
+      setStepUpPassword("");
+      await handleConfirmSend(step_up_token);
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Couldn't verify your password -- check your connection and try again.");
       setSubmitting(false);
     }
   };
@@ -346,8 +391,34 @@ export default function SendScreen(): React.JSX.Element {
                 <ReviewRow label="Amount" value={`${formatMAD(parseMinorUnits(amountInput).toString())} MAD`} emphasize />
                 <ReviewRow label="Reference" value={referenceInput.trim()} />
               </Card>
-              {submitError ? <Text style={styles.errorBanner}>{submitError}</Text> : null}
-              <GlassButton label="Confirm & send" onPress={() => void handleConfirmSend()} loading={submitting} />
+              {stepUpRequired ? (
+                <>
+                  <Text style={styles.stepUpNotice}>
+                    This amount needs your password to confirm -- re-enter it below.
+                  </Text>
+                  <TextField
+                    label="Password"
+                    value={stepUpPassword}
+                    onChangeText={setStepUpPassword}
+                    secureTextEntry
+                    autoComplete="current-password"
+                    autoFocus
+                    onSubmitEditing={() => void handleStepUpAndRetry()}
+                  />
+                  {submitError ? <Text style={styles.errorBanner}>{submitError}</Text> : null}
+                  <GlassButton
+                    label="Confirm with password"
+                    onPress={() => void handleStepUpAndRetry()}
+                    disabled={!stepUpPassword}
+                    loading={submitting}
+                  />
+                </>
+              ) : (
+                <>
+                  {submitError ? <Text style={styles.errorBanner}>{submitError}</Text> : null}
+                  <GlassButton label="Confirm & send" onPress={() => void handleConfirmSend()} loading={submitting} />
+                </>
+              )}
             </Animated.View>
           )}
         </ScrollView>
@@ -621,6 +692,7 @@ const styles = StyleSheet.create({
   gap16: { gap: 16 },
   mutedText: { fontFamily: type.body.family, fontSize: 14, color: colors.textSecondary, lineHeight: 20 },
   errorBanner: { fontFamily: type.caption.family, fontSize: 13, color: colors.danger },
+  stepUpNotice: { fontFamily: type.body.family, fontSize: 14, color: colors.textSecondary, lineHeight: 20 },
   pressed: { opacity: 0.6 },
   contactRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
   recipientAvatar: {

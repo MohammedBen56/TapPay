@@ -317,4 +317,42 @@ export const config = {
    * service) -- see its own comment for why this is safe to lose on
    * restart. */
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+
+  // ---- Ship List v2 Wave 2 Phase 4 (fraud/risk hardening) ----
+  // docs/THREAT_MODEL.md previously named both gaps below accepted-for-MVP
+  // with no tracked fix -- a stolen access token could move up to
+  // maxTransferMinorUnits in one call, or drain an account via many
+  // below-that-cap transfers in a burst, with no additional friction.
+
+  /** POST /auth/step-up's password-verification surface -- same
+   * credential-stuffing risk profile as /auth/login (routes/auth.ts),
+   * scoped to an already-authenticated caller re-proving their password. */
+  rateLimitStepUpMax: envInt("RATE_LIMIT_STEP_UP_MAX", 10),
+
+  /** Amount at/above which POST /transfers requires a fresh
+   * `step_up_token` (minted by POST /auth/step-up, which re-verifies the
+   * password). Proves presence for one large transfer -- the mobile
+   * client cannot silently satisfy this on the user's behalf (CLAUDE.md
+   * §5: the password is never cached on-device), so this is a real
+   * additional factor, not client-side theater. Default: 5,000.00 MAD. */
+  stepUpThresholdMinorUnits: BigInt(envInt("STEP_UP_THRESHOLD_MINOR_UNITS", 500_000)),
+
+  /** How long a step-up token stays valid after POST /auth/step-up --
+   * deliberately short: it exists to prove the password was JUST
+   * re-entered, not to become a second long-lived credential.
+   * auth/plugin.ts's app.authenticate rejects a step-up token outright as
+   * a general bearer credential, so this TTL only bounds how long a
+   * captured token could be replayed against the one route that accepts
+   * it. */
+  stepUpTokenTtlSeconds: envInt("STEP_UP_TOKEN_TTL_SECONDS", 5 * 60),
+
+  /** Rolling 24h cap on total outbound debits (SUM of negative
+   * journal.amount rows) per account -- independent of, and normally
+   * lower than, maxTransferMinorUnits (which only bounds a SINGLE
+   * transfer). Because every settlement (P2P transfer AND bill payment)
+   * writes through the same journal table via bankAdapter.transfer(),
+   * this bounds total damage across BOTH surfaces from one compromised
+   * session, not just /transfers in isolation, with no extra wiring
+   * needed in billPayments.ts. Default: 50,000.00 MAD/24h. */
+  dailyVelocityCapMinorUnits: BigInt(envInt("DAILY_VELOCITY_CAP_MINOR_UNITS", 5_000_000)),
 } as const;

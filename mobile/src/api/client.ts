@@ -62,10 +62,14 @@ export interface ApiRequestOptions {
   body?: unknown;
   /** Set false for /auth/login and /auth/refresh, which carry no bearer token. */
   auth?: boolean;
+  /** Ship List v2 Wave 2 Phase 4 -- api.login() uses this to attach
+   * X-Device-Id. Not a general escape hatch: only add a header here that
+   * has a real, named reason to bypass this file's own default set. */
+  extraHeaders?: Record<string, string>;
 }
 
 async function doFetch(path: string, options: ApiRequestOptions, accessToken: string | null): Promise<Response> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = { "content-type": "application/json", ...options.extraHeaders };
   if (options.auth !== false && accessToken) {
     headers.authorization = `Bearer ${accessToken}`;
   }

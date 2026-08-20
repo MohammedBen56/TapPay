@@ -11,6 +11,25 @@ export interface AccessTokenPayload {
   sub: string;
   aid: string;
   cid: string;
+  /** Ship List v2 Wave 2 Phase 4: set only on a short-lived step-up token
+   * (POST /auth/step-up), never on an ordinary access token. Proves "the
+   * password was just re-entered" for one specific follow-up call (e.g. a
+   * large POST /transfers) -- NOT "this caller may act as this user
+   * generally". app.authenticate below rejects any token carrying this,
+   * so a step-up token can never substitute as a bearer credential on any
+   * other authenticated route. */
+  typ?: "step_up";
+  /** Ship List v2 Wave 2 Phase 4: set only alongside typ: "step_up",
+   * binding the token to the ONE tx_uuid it was requested for. Without
+   * this, a single step-up token (one real password re-entry) stays valid
+   * for its whole TTL and could be replayed across many separate large
+   * transfers -- found by /security-review as a real gap against this
+   * field's own "proves presence for one specific follow-up call" intent.
+   * routes/transfers.ts's verifyStepUpToken checks this against the
+   * transfer's own tx_uuid; a resubmission of that SAME tx_uuid is a
+   * legitimate idempotent replay (CLAUDE.md §5), so re-presenting the same
+   * step-up token for it is correct, not a gap. */
+  tx_uuid?: string;
 }
 
 declare module "@fastify/jwt" {
@@ -94,6 +113,14 @@ export function registerAuthPlugin(app: FastifyInstance): void {
   app.decorate("authenticate", async function authenticate(request: FastifyRequest, reply: FastifyReply) {
     try {
       await request.jwtVerify();
+      // Fail closed: a step-up token is intentionally a narrower
+      // credential than a real access token (see AccessTokenPayload's
+      // `typ` doc comment) -- accepting it here would let a captured
+      // step-up token act as a full bearer credential everywhere, the
+      // opposite of what it's meant to prove.
+      if (request.user.typ === "step_up") {
+        throw new Error("step-up token used as a bearer credential");
+      }
     } catch {
       reply.status(401).send({ error: "Unauthorized", message: "missing or invalid access token" });
     }

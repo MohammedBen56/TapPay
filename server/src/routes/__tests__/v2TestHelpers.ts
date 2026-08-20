@@ -11,6 +11,10 @@ export interface TestCustomerSession {
   rib: string;
   accessToken: string;
   refreshToken: string;
+  /** Plaintext, test-only -- lets a test call POST /auth/step-up (Ship
+   * List v2 Wave 2 Phase 4), which re-verifies the real password. Never
+   * exists outside this test helper; the real app never has this. */
+  password: string;
 }
 
 function randomBranchAndAccount(): { branch: string; account: string } {
@@ -67,7 +71,7 @@ export async function createTestCustomer(
   const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { customer_id: customerId, password } });
   const { access_token, refresh_token } = login.json() as { access_token: string; refresh_token: string };
 
-  return { customerId, userId, accountId, rib, accessToken: access_token, refreshToken: refresh_token };
+  return { customerId, userId, accountId, rib, accessToken: access_token, refreshToken: refresh_token, password };
 }
 
 export function authHeader(session: TestCustomerSession): { authorization: string } {

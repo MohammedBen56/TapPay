@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { recordAudit } from "../audit/log.js";
+import { deriveLoginFingerprint } from "../auth/deviceFingerprint.js";
 import { hashPassword, verifyPassword } from "../auth/passwords.js";
 import {
   issueRefreshToken,
@@ -22,6 +23,15 @@ export const logoutBodySchema = z.object({ refresh_token: z.string().min(1) });
 export const changePasswordBodySchema = z.object({
   current_password: z.string().min(1),
   new_password: z.string().min(8, "new_password must be at least 8 characters"),
+});
+export const stepUpBodySchema = z.object({
+  password: z.string().min(1),
+  // Ship List v2 Wave 2 Phase 4: binds the minted token to the ONE
+  // transfer it authorizes (see auth/plugin.ts's AccessTokenPayload.tx_uuid
+  // doc comment) -- the mobile client already generates tx_uuid before the
+  // review/confirm step (CLAUDE.md's idempotency-key convention), so it's
+  // always known before step-up is ever needed.
+  tx_uuid: z.string().uuid(),
 });
 
 async function signAccessToken(
@@ -115,6 +125,29 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       ]);
       await recordAudit({ userId: cred.user_id, action: "login.success", resourceType: "account", ip: request.ip });
 
+      // Ship List v2 Wave 2 Phase 4: login-anomaly signal. A review-workflow
+      // flag, not a block -- docs/INCIDENT_RESPONSE.md already states
+      // triage here is single-owner, not a staffed rotation, so an
+      // automatic block on a merely-unfamiliar fingerprint (a customer's
+      // new phone, a VPN, a coarser IP-based fallback when no
+      // X-Device-Id header is sent) would create real false-positive
+      // lockouts with no one staffed to review them quickly.
+      const fingerprint = deriveLoginFingerprint(request);
+      const knownDevice = await db
+        .selectFrom("known_devices")
+        .select(["user_id"])
+        .where("user_id", "=", cred.user_id)
+        .where("fingerprint_hash", "=", fingerprint.hash)
+        .executeTakeFirst();
+      if (!knownDevice) {
+        await recordAudit({ userId: cred.user_id, action: "login.new_device", resourceType: "account", ip: request.ip });
+      }
+      await db
+        .insertInto("known_devices")
+        .values({ user_id: cred.user_id, fingerprint_hash: fingerprint.hash })
+        .onConflict((oc) => oc.columns(["user_id", "fingerprint_hash"]).doUpdateSet({ last_seen_at: new Date() }))
+        .execute();
+
       return reply.send({
         access_token: accessToken,
         expires_in: config.accessTokenTtlSeconds,
@@ -204,6 +237,49 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     await recordAudit({ userId, action: "password.change", resourceType: "account", ip: request.ip });
 
     return reply.status(204).send();
+  });
+
+  // Ship List v2 Wave 2 Phase 4: re-verifies the password of an
+  // already-authenticated caller and mints a short-lived step-up token
+  // (see auth/plugin.ts's AccessTokenPayload.typ doc comment). Used by
+  // POST /transfers to require fresh proof-of-presence above
+  // stepUpThresholdMinorUnits -- a real additional factor, not client-side
+  // theater, since CLAUDE.md §5 forbids the mobile client from ever
+  // caching the password itself, so it can only obtain a token by
+  // prompting the user to type their password again right now.
+  const stepUpPreHandlers = app.hasDecorator("rateLimit")
+    ? [
+        app.authenticate,
+        app.rateLimit({ max: config.rateLimitStepUpMax, timeWindow: "1 minute", keyGenerator: (request) => request.user.sub }),
+      ]
+    : [app.authenticate];
+
+  app.post("/auth/step-up", { preHandler: stepUpPreHandlers }, async (request, reply) => {
+    const parsed = stepUpBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "InvalidRequest", message: parsed.error.message });
+    }
+    const { password, tx_uuid } = parsed.data;
+    const { sub: userId, aid: accountId, cid: customerId } = request.user;
+
+    const cred = await db
+      .selectFrom("customer_credentials")
+      .select(["password_hash"])
+      .where("user_id", "=", userId)
+      .executeTakeFirstOrThrow();
+
+    const ok = await verifyPassword(cred.password_hash, password);
+    if (!ok) {
+      await recordAudit({ userId, action: "step_up.failure", resourceType: "account", ip: request.ip });
+      return reply.status(401).send({ error: "InvalidCredentials", message: "password is incorrect" });
+    }
+
+    const stepUpToken = await app.jwt.sign(
+      { sub: userId, aid: accountId, cid: customerId, typ: "step_up", tx_uuid },
+      { expiresIn: config.stepUpTokenTtlSeconds, kid: config.jwtSigningKeys[0].kid },
+    );
+    await recordAudit({ userId, action: "step_up.success", resourceType: "account", ip: request.ip });
+    return reply.send({ step_up_token: stepUpToken, expires_in: config.stepUpTokenTtlSeconds });
   });
 
   // Ship List v2 -- auth_sessions (migration 014) already tracks every

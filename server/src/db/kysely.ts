@@ -209,6 +209,19 @@ export interface AuditLogTable {
   created_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 4 (024_known_devices.cjs): a per-user login
+ * fingerprint set, used to flag a login from a never-seen fingerprint
+ * (audit_log's `login.new_device`) -- see
+ * server/src/auth/deviceFingerprint.ts. Mutable (last_seen_at updates on
+ * every repeat login), unlike journal/transfers/audit_log/
+ * settlement_events. */
+export interface KnownDevicesTable {
+  user_id: string;
+  fingerprint_hash: Buffer;
+  first_seen_at: Generated<Date>;
+  last_seen_at: Generated<Date>;
+}
+
 export interface Database {
   users: UsersTable;
   accounts: AccountsTable;
@@ -224,6 +237,7 @@ export interface Database {
   bill_payments: BillPaymentsTable;
   audit_log: AuditLogTable;
   settlement_events: SettlementEventsTable;
+  known_devices: KnownDevicesTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

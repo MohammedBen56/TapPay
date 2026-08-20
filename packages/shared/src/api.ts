@@ -26,7 +26,11 @@ export type ErrorCode =
   | "InsufficientFunds"
   | "DuplicateBeneficiary"
   | "DuplicateAccount"
-  | "NotFound";
+  | "NotFound"
+  // Ship List v2 Wave 2 Phase 4:
+  | "StepUpRequired"
+  | "VelocityCapExceeded"
+  | "AccountBusy";
 
 export interface ApiErrorBody {
   error: ErrorCode;
@@ -75,6 +79,20 @@ export interface ChangePasswordRequest {
 // 204 No Content on success -- no response body. Revokes every active
 // session for the user (server/src/auth/refreshTokens.ts's
 // revokeAllSessionsForUser) -- the caller itself gets signed out too.
+
+// ---- POST /auth/step-up (Ship List v2 Wave 2 Phase 4) ----
+
+export interface StepUpRequest {
+  password: string;
+  /** The tx_uuid of the transfer this step-up is for -- the minted token
+   * is bound to it and rejected by POST /transfers for any other tx_uuid. */
+  tx_uuid: string;
+}
+
+export interface StepUpResponse {
+  step_up_token: string;
+  expires_in: number;
+}
 
 // ---- /auth/sessions ----
 
@@ -271,6 +289,10 @@ export interface CreateTransferRequest {
   /** Ship List v2 Phase 8 -- which of the caller's own accounts sends the
    * money. Omit for the caller's checking account. */
   from_account_id?: string;
+  /** Ship List v2 Wave 2 Phase 4 -- required once amount reaches the
+   * server's stepUpThresholdMinorUnits; obtained via POST /auth/step-up,
+   * bound to this SAME tx_uuid. */
+  step_up_token?: string;
 }
 
 export interface CreateTransferResponse {

@@ -28,12 +28,15 @@ import type {
   SessionsResponse,
   StatementQuery,
   StatementResponse,
+  StepUpRequest,
+  StepUpResponse,
   TransactionsQuery,
   TransactionsResponse,
   TransferDetailResponse,
   UpdateBeneficiaryRequest,
   UpdateBeneficiaryResponse,
 } from "@tappay/shared";
+import { getDeviceId } from "../auth/deviceId";
 import { apiRequest } from "./client";
 
 function query(params: TransactionsQuery = {}): string {
@@ -58,10 +61,21 @@ function billPaymentsQuery(params: BillPaymentsQuery = {}): string {
 }
 
 export const api = {
-  login: (body: LoginRequest) => apiRequest<LoginResponse>("/auth/login", { method: "POST", body, auth: false }),
+  // Ship List v2 Wave 2 Phase 4: X-Device-Id backs the server's
+  // login-anomaly signal (server/src/auth/deviceFingerprint.ts) -- login
+  // is the one call site that attaches it, since that's the only route
+  // that reads it.
+  login: async (body: LoginRequest) =>
+    apiRequest<LoginResponse>("/auth/login", {
+      method: "POST",
+      body,
+      auth: false,
+      extraHeaders: { "x-device-id": await getDeviceId() },
+    }),
   refresh: (body: RefreshRequest) => apiRequest<RefreshResponse>("/auth/refresh", { method: "POST", body, auth: false }),
   logout: (body: LogoutRequest) => apiRequest<void>("/auth/logout", { method: "POST", body }),
   changePassword: (body: ChangePasswordRequest) => apiRequest<void>("/auth/change-password", { method: "POST", body }),
+  stepUp: (body: StepUpRequest) => apiRequest<StepUpResponse>("/auth/step-up", { method: "POST", body }),
   sessions: () => apiRequest<SessionsResponse>("/auth/sessions"),
   revokeSession: (id: string) => apiRequest<void>(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
