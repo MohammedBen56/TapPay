@@ -30,12 +30,14 @@ import type {
   MeQuery,
   MeResponse,
   MoneyRequestsResponse,
+  NotificationsResponse,
   OpenAccountRequest,
   OpenAccountResponse,
   PayBillRequest,
   PayBillResponse,
   RefreshRequest,
   RefreshResponse,
+  RegisterPushTokenRequest,
   RibLookupResponse,
   SessionsResponse,
   StatementQuery,
@@ -145,4 +147,8 @@ export const api = {
   fulfillMoneyRequest: (id: string) =>
     apiRequest<FulfillMoneyRequestResponse>(`/money-requests/${encodeURIComponent(id)}/fulfill`, { method: "POST" }),
   declineMoneyRequest: (id: string) => apiRequest<void>(`/money-requests/${encodeURIComponent(id)}/decline`, { method: "POST" }),
+
+  registerPushToken: (body: RegisterPushTokenRequest) => apiRequest<void>("/push-tokens", { method: "POST", body }),
+  notifications: () => apiRequest<NotificationsResponse>("/notifications"),
+  markNotificationRead: (id: string) => apiRequest<void>(`/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
 };

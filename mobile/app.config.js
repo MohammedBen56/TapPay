@@ -83,6 +83,21 @@ module.exports = {
           },
         },
       ],
+      // Ship List v2 Wave 2 Phase 8: push notifications. Reuses the same
+      // adaptive-icon asset the app shortcuts above use, on the same
+      // reasoning -- a real, working default rather than bespoke
+      // notification-icon art not done this phase. Configures the
+      // Android notification icon/color only; this plugin adds no
+      // permissions of its own on Android 12 and below (Android 13+'s
+      // POST_NOTIFICATIONS runtime permission is requested at runtime by
+      // mobile/src/push/pushToken.ts, not declared here).
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/android-icon-foreground.png",
+          color: "#E6F4FE",
+        },
+      ],
     ],
   },
 };

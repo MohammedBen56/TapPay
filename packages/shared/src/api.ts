@@ -563,3 +563,28 @@ export interface FulfillMoneyRequestResponse {
   tx_uuid: string;
   settled_at: string;
 }
+
+// ---- Push notifications (Ship List v2 Wave 2 Phase 8) ----
+// See server/src/notifications.ts for the real boundary on live push
+// delivery (an EAS project id this repo doesn't have yet) -- the in-app
+// notification center below works regardless.
+
+export interface RegisterPushTokenRequest {
+  token: string;
+  platform: "android" | "ios";
+}
+// 204 No Content on success -- no response body.
+
+export interface Notification {
+  id: string;
+  title: string;
+  body: string;
+  data: unknown;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationsResponse {
+  notifications: Notification[];
+}
+// POST /notifications/:id/read -- 204 No Content on success, idempotent.

@@ -298,6 +298,33 @@ export interface MoneyRequestsTable {
   created_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 8 (030_push_tokens.cjs): registered Expo push
+ * tokens, one row per (user, device) -- a user can have more than one. See
+ * server/src/notifications.ts. */
+export type PushTokenPlatform = "android" | "ios";
+export interface PushTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token: string;
+  platform: PushTokenPlatform;
+  updated_at: Generated<Date>;
+}
+
+/** Ship List v2 Wave 2 Phase 8 (031_notifications.cjs): the in-app
+ * notification center's backing store, written on every notify() call
+ * regardless of whether push delivery itself succeeds. `data` mirrors
+ * `devices.attestation_blob`'s existing JSONB convention in this schema
+ * -- typed `unknown` here, `JSON.stringify`'d on insert. */
+export interface NotificationsTable {
+  id: Generated<string>;
+  user_id: string;
+  title: string;
+  body: string;
+  data: unknown;
+  read_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   users: UsersTable;
   accounts: AccountsTable;
@@ -318,6 +345,8 @@ export interface Database {
   support_requests: SupportRequestsTable;
   disputes: DisputesTable;
   money_requests: MoneyRequestsTable;
+  push_tokens: PushTokensTable;
+  notifications: NotificationsTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

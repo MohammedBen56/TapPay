@@ -44,6 +44,7 @@ import { billPaymentsQuerySchema, categoryQuerySchema, payBillBodySchema } from 
 import { createDisputeBodySchema } from "./routes/disputes.js";
 import { createGoalBodySchema, fundGoalBodySchema } from "./routes/goals.js";
 import { createMoneyRequestBodySchema } from "./routes/moneyRequests.js";
+import { registerPushTokenBodySchema } from "./routes/pushTokens.js";
 import { createSupportRequestBodySchema } from "./routes/support.js";
 
 function bodyFrom(schema: ZodTypeAny): OpenAPIV3.RequestBodyObject {
@@ -477,6 +478,35 @@ export function buildOpenApiDocument(): OpenAPIV3.Document {
           security: bearerAuth,
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
           responses: { "204": { description: "declined" }, "404": { description: "not found, not addressed to the caller, or already resolved" } },
+        },
+      },
+      "/push-tokens": {
+        post: {
+          operationId: "registerPushToken",
+          summary: "Register (or refresh) the caller's own Expo push token",
+          tags: ["notifications"],
+          security: bearerAuth,
+          requestBody: bodyFrom(registerPushTokenBodySchema),
+          responses: { "204": { description: "registered" } },
+        },
+      },
+      "/notifications": {
+        get: {
+          operationId: "listNotifications",
+          summary: "The caller's own recent in-app notifications",
+          tags: ["notifications"],
+          security: bearerAuth,
+          responses: { "200": { description: "NotificationsResponse" } },
+        },
+      },
+      "/notifications/{id}/read": {
+        post: {
+          operationId: "markNotificationRead",
+          summary: "Mark one of the caller's own notifications read (idempotent)",
+          tags: ["notifications"],
+          security: bearerAuth,
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "204": { description: "marked read (or already was)" } },
         },
       },
     },

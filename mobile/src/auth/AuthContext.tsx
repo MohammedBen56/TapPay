@@ -16,6 +16,7 @@ import {
   saveRefreshTokenForBiometric,
 } from "./secureStore";
 import { getTokens, setSessionExpiredHandler, setTokens } from "./tokenStore";
+import { registerPushToken } from "../push/pushToken";
 
 // "awaitingBiometricPrompt" sits between a successful password login and
 // full access: it's the interstitial where the sign-in screen offers "Enable
@@ -79,6 +80,17 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   const [biometricHardwareAvailable, setBiometricHardwareAvailable] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Ship List v2 Wave 2 Phase 8: register (or refresh) the push token once
+  // per session becoming signed-in -- covers both loginWithPassword and
+  // loginWithBiometric/finishBiometricPrompt without duplicating the call
+  // at each of those sites. Best-effort by construction (pushToken.ts's
+  // own doc comment) -- never blocks or errors this effect's caller.
+  useEffect(() => {
+    if (status === "signedIn") {
+      void registerPushToken();
+    }
+  }, [status]);
 
   useEffect(() => {
     let cancelled = false;

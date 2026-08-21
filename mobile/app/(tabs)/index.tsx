@@ -67,6 +67,13 @@ export default function HomeScreen(): React.JSX.Element {
   const transactions = transactionsQuery.data?.transactions ?? [];
   const balanceDisplay = balanceQuery.data ? formatMAD(balanceQuery.data.available_balance) : "----.--";
 
+  // Ship List v2 Wave 2 Phase 8: unread count for the bell badge. Same
+  // polling cadence as the rest of Home (no live socket/push-driven
+  // update -- server/src/notifications.ts's own header comment has the
+  // real boundary on live push delivery).
+  const notificationsQuery = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, staleTime: 15_000 });
+  const unreadCount = notificationsQuery.data?.notifications.filter((n) => n.read_at === null).length ?? 0;
+
   return (
     <ScreenBackground>
       <View style={styles.container}>
@@ -75,6 +82,23 @@ export default function HomeScreen(): React.JSX.Element {
             <Text style={styles.greeting}>Good to see you</Text>
             <Text style={styles.name}>{account?.display_name ?? "—"}</Text>
           </View>
+          <Pressable
+            onPress={() => router.push("/notifications")}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
+            accessibilityHint="Opens your notification history"
+            style={styles.bellButton}
+          >
+            <Ionicons name="notifications-outline" size={22} color={colors.bone} />
+            {unreadCount > 0 ? (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText} maxFontSizeMultiplier={1.3}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
         </Animated.View>
 
         {segmentOptions.length > 1 && (
@@ -138,6 +162,20 @@ export default function HomeScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  bellButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.glassLow, alignItems: "center", justifyContent: "center" },
+  bellBadge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bellBadgeText: { fontFamily: type.caption.family, fontSize: 10, color: colors.bone },
   greeting: { fontFamily: type.caption.family, fontSize: 13, color: colors.textSecondary },
   name: { fontFamily: type.screenTitle.family, fontSize: 22, color: colors.bone, marginTop: 2 },
   switcherWrap: { marginBottom: 12 },

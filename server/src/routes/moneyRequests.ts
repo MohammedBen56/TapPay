@@ -1,4 +1,4 @@
-import { isValidRib } from "@tappay/shared";
+import { formatMinorUnits, isValidRib } from "@tappay/shared";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -6,6 +6,7 @@ import { bankAdapter } from "../adapters/index.js";
 import { recordAudit } from "../audit/log.js";
 import { withAccountAdvisoryLock } from "../db/advisoryLock.js";
 import { db } from "../db/kysely.js";
+import { notify } from "../notifications.js";
 import { resolveOwnedAccount } from "./accountSelection.js";
 import { sendSettlementFailure } from "./settlementRouteHelpers.js";
 import { moneyRequestTotal } from "../metrics.js";
@@ -180,6 +181,18 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
     await recordAudit({ userId, action: "money_request.create", resourceType: "money_request", resourceId: row.id, ip: request.ip });
     moneyRequestTotal.inc({ outcome: "created" });
 
+    // Ship List v2 Wave 2 Phase 8: best-effort, never fails an
+    // already-created request (notify()'s own doc comment has the full
+    // reasoning, same posture as roundup.ts's maybeSweepRoundUp).
+    try {
+      await notify(target.user_id, "Money request", `${requesterAccount.display_name ?? "Someone"} is requesting ${formatMinorUnits(amountMinor)} ${currency} -- ${reference}`, {
+        type: "money_request",
+        request_id: row.id,
+      });
+    } catch (err) {
+      request.log.error(err, "money-request notification failed (non-fatal, request already created)");
+    }
+
     return reply.status(201).send({ id: row.id });
   });
 
@@ -212,7 +225,15 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
       | { kind: "not_found" }
       | { kind: "not_pending"; status: string }
       | { kind: "settlement_failed"; result: Awaited<ReturnType<typeof bankAdapter.transfer>> }
-      | { kind: "fulfilled"; txUuid: string; settledAt: Date };
+      | {
+          kind: "fulfilled";
+          txUuid: string;
+          settledAt: Date;
+          requesterUserId: string;
+          amount: bigint;
+          currency: string;
+          reference: string;
+        };
 
     let outcome: FulfillOutcome;
     try {
@@ -244,7 +265,15 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
         }
 
         await trx.updateTable("money_requests").set({ status: "fulfilled", tx_uuid: txUuid }).where("id", "=", id).execute();
-        return { kind: "fulfilled", txUuid, settledAt: result.settledAt };
+        return {
+          kind: "fulfilled",
+          txUuid,
+          settledAt: result.settledAt,
+          requesterUserId: moneyRequest.requester_user_id,
+          amount: moneyRequest.amount,
+          currency: moneyRequest.currency,
+          reference: moneyRequest.reference,
+        };
       });
     } catch (err) {
       // Postgres 55P03 (lock_not_available) -- same meaning and same fix
@@ -271,6 +300,18 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
 
     await recordAudit({ userId, action: "money_request.fulfill", resourceType: "money_request", resourceId: id, ip: request.ip });
     moneyRequestTotal.inc({ outcome: "fulfilled" });
+
+    try {
+      await notify(
+        outcome.requesterUserId,
+        "Request paid",
+        `${targetAccount.display_name ?? "Someone"} paid your request for ${formatMinorUnits(outcome.amount)} ${outcome.currency} -- ${outcome.reference}`,
+        { type: "money_request_fulfilled", request_id: id, tx_uuid: outcome.txUuid },
+      );
+    } catch (err) {
+      request.log.error(err, "money-request-fulfilled notification failed (non-fatal, settlement already succeeded)");
+    }
+
     return reply.send({ tx_uuid: outcome.txUuid, settled_at: outcome.settledAt.toISOString() });
   });
 
