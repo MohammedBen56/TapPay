@@ -516,3 +516,50 @@ export interface CreateDisputeRequest {
   tx_uuid: string;
   reason: string;
 }
+
+// ---- Money requests (Ship List v2 Wave 2 Phase 7) ----
+// A request always names a specific target, resolved by RIB or
+// beneficiary id at creation time -- the same recipient-resolution
+// shape POST /transfers uses. See server/src/routes/moneyRequests.ts.
+
+export type MoneyRequestStatus = "pending" | "fulfilled" | "declined";
+
+export interface MoneyRequestParty {
+  display_name: string | null;
+  rib: string | null;
+}
+
+export interface MoneyRequest {
+  id: string;
+  requester: MoneyRequestParty;
+  target: MoneyRequestParty;
+  /** Minor-units decimal string. */
+  amount: string;
+  currency: string;
+  reference: string;
+  status: MoneyRequestStatus;
+  tx_uuid: string | null;
+  created_at: string;
+}
+
+export interface MoneyRequestsResponse {
+  incoming: MoneyRequest[];
+  outgoing: MoneyRequest[];
+}
+
+export interface CreateMoneyRequestRequest {
+  to_rib?: string;
+  to_beneficiary_id?: string;
+  amount: string;
+  currency: string;
+  reference: string;
+}
+
+export interface CreateMoneyRequestResponse {
+  id: string;
+}
+
+export interface FulfillMoneyRequestResponse {
+  tx_uuid: string;
+  settled_at: string;
+}

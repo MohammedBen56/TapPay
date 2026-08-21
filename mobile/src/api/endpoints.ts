@@ -12,12 +12,15 @@ import type {
   CreateBeneficiaryResponse,
   CreateDisputeRequest,
   CreateGoalRequest,
+  CreateMoneyRequestRequest,
+  CreateMoneyRequestResponse,
   CreateSupportRequestRequest,
   CreateTransferRequest,
   CreateTransferResponse,
   DataExportResponse,
   Dispute,
   DisputesResponse,
+  FulfillMoneyRequestResponse,
   FundGoalRequest,
   Goal,
   GoalsResponse,
@@ -26,6 +29,7 @@ import type {
   LogoutRequest,
   MeQuery,
   MeResponse,
+  MoneyRequestsResponse,
   OpenAccountRequest,
   OpenAccountResponse,
   PayBillRequest,
@@ -134,4 +138,11 @@ export const api = {
 
   disputes: () => apiRequest<DisputesResponse>("/disputes"),
   createDispute: (body: CreateDisputeRequest) => apiRequest<Dispute>("/disputes", { method: "POST", body }),
+
+  moneyRequests: () => apiRequest<MoneyRequestsResponse>("/money-requests"),
+  createMoneyRequest: (body: CreateMoneyRequestRequest) =>
+    apiRequest<CreateMoneyRequestResponse>("/money-requests", { method: "POST", body }),
+  fulfillMoneyRequest: (id: string) =>
+    apiRequest<FulfillMoneyRequestResponse>(`/money-requests/${encodeURIComponent(id)}/fulfill`, { method: "POST" }),
+  declineMoneyRequest: (id: string) => apiRequest<void>(`/money-requests/${encodeURIComponent(id)}/decline`, { method: "POST" }),
 };

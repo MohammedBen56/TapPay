@@ -67,19 +67,27 @@ function utf8BytesToString(bytes: number[]): string {
   return result;
 }
 
-export type NfcReadOutcome =
-  | { status: "success"; payload: ProfileQrPayload }
+export type NfcReadOutcome<T> =
+  | { status: "success"; payload: T }
   | { status: "no_payload" } // reader touched a phone that isn't currently sharing
   | { status: "not_a_tappay_tag" } // SELECT failed -- some other NFC tag/card
-  | { status: "invalid_payload" } // read succeeded but the bytes weren't a valid profile payload
+  | { status: "invalid_payload" } // read succeeded but the bytes weren't a valid payload for the given decoder
   | { status: "cancelled" }
   | { status: "error"; message: string };
 
 /** Opens an NFC reader session, waits for a tap, exchanges the single SELECT
  * APDU, and always tears the session down (success, failure, or timeout)
  * before resolving. Caller supplies the timeout -- the Send screen's "hold
- * phones together" UI decides how long to wait before giving up. */
-export async function readNfcProfile(timeoutMs: number): Promise<NfcReadOutcome> {
+ * phones together" UI decides how long to wait before giving up.
+ *
+ * Ship List v2 Wave 2 Phase 7: generalized from a hardcoded
+ * decodeProfileQr call to an injectable `decode` function, so the same
+ * transport (the AID/APDU exchange, NfcHceService.kt on the sharing
+ * phone) can carry money-request payloads too, not just profile-share
+ * ones -- the wire bytes are opaque UTF-8 either way, only the JSON
+ * shape on top differs. `readNfcProfile` below is now a one-line wrapper
+ * over this, so the existing Profile/Send NFC-share flow is unaffected. */
+export async function readNfcPayload<T>(timeoutMs: number, decode: (raw: string) => T | null): Promise<NfcReadOutcome<T>> {
   try {
     await NfcManager.start();
   } catch (err) {
@@ -120,7 +128,7 @@ export async function readNfcProfile(timeoutMs: number): Promise<NfcReadOutcome>
 
     const payloadBytes = selectResponse.slice(0, -2);
     const payloadUtf8 = utf8BytesToString(payloadBytes);
-    const payload = decodeProfileQr(payloadUtf8);
+    const payload = decode(payloadUtf8);
     if (!payload) {
       return { status: "invalid_payload" };
     }
@@ -134,4 +142,9 @@ export async function readNfcProfile(timeoutMs: number): Promise<NfcReadOutcome>
       // already cancelled/torn down -- fine
     }
   }
+}
+
+/** The pre-Phase-7 entry point, unaffected by the generalization above. */
+export async function readNfcProfile(timeoutMs: number): Promise<NfcReadOutcome<ProfileQrPayload>> {
+  return readNfcPayload(timeoutMs, decodeProfileQr);
 }

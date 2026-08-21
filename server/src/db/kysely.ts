@@ -280,6 +280,24 @@ export interface DisputesTable {
   created_at: Generated<Date>;
 }
 
+/** Ship List v2 Wave 2 Phase 7 (029_money_requests.cjs): "request money"
+ * core. Always targets a specific user (resolved by RIB/beneficiary id at
+ * creation time, same as a transfer's recipient) -- see
+ * server/src/routes/moneyRequests.ts. */
+export type MoneyRequestStatus = "pending" | "fulfilled" | "declined";
+export interface MoneyRequestsTable {
+  id: Generated<string>;
+  requester_user_id: string;
+  requester_account_id: string;
+  target_user_id: string;
+  amount: bigint;
+  currency: string;
+  reference: string;
+  status: Generated<MoneyRequestStatus>;
+  tx_uuid: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface Database {
   users: UsersTable;
   accounts: AccountsTable;
@@ -299,6 +317,7 @@ export interface Database {
   goals: GoalsTable;
   support_requests: SupportRequestsTable;
   disputes: DisputesTable;
+  money_requests: MoneyRequestsTable;
 }
 
 // Set by app.ts once Fastify's own logger exists (same pattern as

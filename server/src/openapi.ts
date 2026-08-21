@@ -43,6 +43,7 @@ import { createBodySchema as createBeneficiaryBodySchema, updateBodySchema as up
 import { billPaymentsQuerySchema, categoryQuerySchema, payBillBodySchema } from "./routes/billPayments.js";
 import { createDisputeBodySchema } from "./routes/disputes.js";
 import { createGoalBodySchema, fundGoalBodySchema } from "./routes/goals.js";
+import { createMoneyRequestBodySchema } from "./routes/moneyRequests.js";
 import { createSupportRequestBodySchema } from "./routes/support.js";
 
 function bodyFrom(schema: ZodTypeAny): OpenAPIV3.RequestBodyObject {
@@ -435,6 +436,47 @@ export function buildOpenApiDocument(): OpenAPIV3.Document {
             "404": { description: "no transaction with this tx_uuid for the caller's own account" },
             "409": { description: "DuplicateDispute -- already flagged" },
           },
+        },
+      },
+      "/money-requests": {
+        get: {
+          operationId: "listMoneyRequests",
+          summary: "The caller's own incoming (owed to them) and outgoing (they're owed) money requests",
+          tags: ["money-requests"],
+          security: bearerAuth,
+          responses: { "200": { description: "MoneyRequestsResponse" } },
+        },
+        post: {
+          operationId: "createMoneyRequest",
+          summary: "Request money from a specific person, by RIB or saved beneficiary",
+          tags: ["money-requests"],
+          security: bearerAuth,
+          requestBody: bodyFrom(createMoneyRequestBodySchema),
+          responses: { "201": { description: "{id}" } },
+        },
+      },
+      "/money-requests/{id}/fulfill": {
+        post: {
+          operationId: "fulfillMoneyRequest",
+          summary: "Pay a money request addressed to the caller -- settles via the same path as POST /transfers",
+          tags: ["money-requests"],
+          security: bearerAuth,
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: {
+            "200": { description: "FulfillMoneyRequestResponse" },
+            "404": { description: "not found, or not addressed to the caller" },
+            "409": { description: "already fulfilled or declined" },
+          },
+        },
+      },
+      "/money-requests/{id}/decline": {
+        post: {
+          operationId: "declineMoneyRequest",
+          summary: "Decline a money request addressed to the caller",
+          tags: ["money-requests"],
+          security: bearerAuth,
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "204": { description: "declined" }, "404": { description: "not found, not addressed to the caller, or already resolved" } },
         },
       },
     },

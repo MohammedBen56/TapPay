@@ -23,6 +23,7 @@ import { registerDisputeRoutes } from "./routes/disputes.js";
 import { registerGoalRoutes } from "./routes/goals.js";
 import { registerLookupRoutes } from "./routes/lookup.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerMoneyRequestRoutes } from "./routes/moneyRequests.js";
 import { registerSubscriptionRoutes } from "./routes/subscriptions.js";
 import { registerSupportRoutes } from "./routes/support.js";
 import { registerTransferRoutes } from "./routes/transfers.js";
@@ -212,6 +213,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         registerSubscriptionRoutes(v1);
         registerSupportRoutes(v1);
         registerDisputeRoutes(v1);
+        registerMoneyRequestRoutes(v1);
       },
       { prefix: "/v1" },
     );

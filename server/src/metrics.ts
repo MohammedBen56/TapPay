@@ -42,6 +42,13 @@ export const billPaymentTotal = new Counter({
   registers: [register],
 });
 
+export const moneyRequestTotal = new Counter({
+  name: "tappay_money_request_total",
+  help: "Money-request lifecycle events by outcome (created, fulfilled, declined, and settlement failure reasons mirroring tappay_transfer_total).",
+  labelNames: ["outcome"] as const,
+  registers: [register],
+});
+
 export const accountLockWaitSeconds = new Histogram({
   name: "tappay_account_lock_wait_seconds",
   help: "Wall-clock time for lockAccount's SELECT ... FOR UPDATE round trip. A rising p99 here is the earliest signal of lock contention on a hot account, well before it shows up as request latency.",

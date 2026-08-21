@@ -148,6 +148,28 @@ function RootNavigator(): React.JSX.Element | null {
             presentation: "card",
           }}
         />
+        <Stack.Screen
+          name="requests/index"
+          options={{
+            headerShown: true,
+            headerTitle: "Requests",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
+        <Stack.Screen
+          name="requests/new"
+          options={{
+            headerShown: true,
+            headerTitle: "Request money",
+            headerStyle: { backgroundColor: colors.ground },
+            headerTintColor: colors.bone,
+            headerShadowVisible: false,
+            presentation: "card",
+          }}
+        />
       </Stack.Protected>
       <Stack.Protected guard={status === "signedOut" || status === "awaitingBiometricPrompt" || status === "locked"}>
         <Stack.Screen name="sign-in" />

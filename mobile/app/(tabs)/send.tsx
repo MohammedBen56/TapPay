@@ -1,4 +1,4 @@
-import { isValidRib, parseMinorUnits } from "@tappay/shared";
+import { formatMinorUnits, isValidRib, parseMinorUnits } from "@tappay/shared";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -20,8 +20,8 @@ import { SegmentedControl } from "../../src/components/SegmentedControl";
 import { TextField } from "../../src/components/TextField";
 import { colors, type } from "../../src/design/tokens";
 import { formatMAD, formatRibGrouped } from "../../src/design/format";
-import { decodeProfileQr } from "../../src/qr/profileQr";
-import { readNfcProfile } from "../../src/nfc/nfcReader";
+import { decodeProfileQr, decodeRequestQr } from "../../src/qr/profileQr";
+import { readNfcPayload } from "../../src/nfc/nfcReader";
 import { uuidv4 } from "../../src/util/uuid";
 
 type Step = "recipient" | "amount" | "reference" | "review" | "success";
@@ -31,6 +31,38 @@ interface Recipient {
   rib: string;
   displayName: string;
   beneficiaryId?: string;
+  // Ship List v2 Wave 2 Phase 7: set only when this recipient came from
+  // scanning/importing/NFC-reading a money-request QR (RequestQrPayload)
+  // -- prefills amount/reference and routes "Confirm & send" through
+  // POST /money-requests/:id/fulfill instead of a bare POST /transfers.
+  moneyRequestId?: string;
+  presetAmountMinor?: string;
+  presetReference?: string;
+}
+
+/** Ship List v2 Wave 2 Phase 7: every scan/import/NFC-read call site funnels
+ * through here so a money-request QR/NFC payload (RequestQrPayload) and a
+ * plain profile-share one (ProfileQrPayload) both resolve to a Recipient,
+ * with the request variant carrying the extra fields chooseRecipient()
+ * uses to skip straight to review. Tried in this order since a request
+ * payload's own shape ({type: "request", ...}) is unambiguous -- it never
+ * matches decodeProfileQr's looser "has a rib" check by accident. */
+function resolveScannedRecipient(raw: string): Recipient | null {
+  const requestPayload = decodeRequestQr(raw);
+  if (requestPayload && isValidRib(requestPayload.rib)) {
+    return {
+      rib: requestPayload.rib,
+      displayName: requestPayload.display_name || "Recipient",
+      moneyRequestId: requestPayload.request_id,
+      presetAmountMinor: requestPayload.amount,
+      presetReference: requestPayload.reference,
+    };
+  }
+  const profilePayload = decodeProfileQr(raw);
+  if (profilePayload && isValidRib(profilePayload.rib)) {
+    return { rib: profilePayload.rib, displayName: profilePayload.display_name || "Recipient" };
+  }
+  return null;
 }
 
 const STEP_TITLES: Record<Exclude<Step, "success">, string> = {
@@ -155,6 +187,15 @@ export default function SendScreen(): React.JSX.Element {
     }
     setRecipientError(null);
     setRecipient(r);
+    // A money-request QR/NFC payload already carries the amount and
+    // reference the requester chose -- skip straight to review instead
+    // of asking the payer to re-enter what's already known.
+    if (r.presetAmountMinor && r.presetReference !== undefined) {
+      setAmountInput(formatMinorUnits(BigInt(r.presetAmountMinor)));
+      setReferenceInput(r.presetReference);
+      setStep("review");
+      return;
+    }
     setStep("amount");
   };
 
@@ -199,23 +240,38 @@ export default function SendScreen(): React.JSX.Element {
     setSubmitting(true);
     try {
       const amountMinor = parseMinorUnits(amountInput).toString();
-      const result = await api.createTransfer({
-        tx_uuid: txUuidRef.current,
-        ...(recipient.beneficiaryId ? { to_beneficiary_id: recipient.beneficiaryId } : { to_rib: recipient.rib }),
-        amount: amountMinor,
-        currency: "MAD",
-        reference: referenceInput.trim(),
-        from_account_id: fromAccountId,
-        step_up_token: stepUpToken,
-      });
+      // Ship List v2 Wave 2 Phase 7: a recipient sourced from a scanned/
+      // NFC-read money-request QR fulfills that SAME request (the server
+      // resolves amount/reference/counterparty from the stored request
+      // itself) instead of submitting a bare transfer.
+      let settledAmount: string;
+      let settledTxUuid: string;
+      if (recipient.moneyRequestId) {
+        const result = await api.fulfillMoneyRequest(recipient.moneyRequestId);
+        settledAmount = amountMinor;
+        settledTxUuid = result.tx_uuid;
+      } else {
+        const result = await api.createTransfer({
+          tx_uuid: txUuidRef.current,
+          ...(recipient.beneficiaryId ? { to_beneficiary_id: recipient.beneficiaryId } : { to_rib: recipient.rib }),
+          amount: amountMinor,
+          currency: "MAD",
+          reference: referenceInput.trim(),
+          from_account_id: fromAccountId,
+          step_up_token: stepUpToken,
+        });
+        settledAmount = result.amount;
+        settledTxUuid = result.tx_uuid;
+      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Prefix match invalidates every account's balance/transactions --
       // an internal transfer moves both sides' balances at once.
       void queryClient.invalidateQueries({ queryKey: ["balance"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      setSettledAmount(result.amount);
-      setSettledTxUuid(result.tx_uuid);
+      void queryClient.invalidateQueries({ queryKey: ["money-requests"] });
+      setSettledAmount(settledAmount);
+      setSettledTxUuid(settledTxUuid);
       setStep("success");
     } catch (err) {
       if (err instanceof ApiError && err.code === "StepUpRequired") {
@@ -544,14 +600,14 @@ function ScanRecipient({ onChoose }: { onChoose: (r: Recipient) => void }): Reac
 
   const handleScanned = (result: { data: string }): void => {
     if (locked.current) return;
-    const payload = decodeProfileQr(result.data);
-    if (!payload || !isValidRib(payload.rib)) {
-      setError("That QR code isn't a TapPay profile code.");
+    const recipient = resolveScannedRecipient(result.data);
+    if (!recipient) {
+      setError("That QR code isn't a TapPay profile or request code.");
       return;
     }
     locked.current = true;
     void Haptics.selectionAsync();
-    onChoose({ rib: payload.rib, displayName: payload.display_name || "Recipient" });
+    onChoose(recipient);
   };
 
   if (!permission) return <Text style={styles.mutedText}>Checking camera permission…</Text>;
@@ -598,12 +654,12 @@ function NfcRecipient({ onChoose }: { onChoose: (r: Recipient) => void }): React
     setStatus("waiting");
     setError(null);
 
-    void readNfcProfile(30_000).then((outcome) => {
+    void readNfcPayload(30_000, resolveScannedRecipient).then((outcome) => {
       if (cancelled) return;
       switch (outcome.status) {
         case "success":
           void Haptics.selectionAsync();
-          onChoose({ rib: outcome.payload.rib, displayName: outcome.payload.display_name || "Recipient" });
+          onChoose(outcome.payload);
           return;
         case "cancelled":
           setStatus("error");
@@ -658,12 +714,12 @@ function ImportRecipient({ onChoose }: { onChoose: (r: Recipient) => void }): Re
     try {
       const { scanFromURLAsync } = await import("expo-camera");
       const matches = await scanFromURLAsync(result.assets[0].uri, ["qr"]);
-      const payload = matches[0] ? decodeProfileQr(matches[0].data) : null;
-      if (!payload || !isValidRib(payload.rib)) {
+      const recipient = matches[0] ? resolveScannedRecipient(matches[0].data) : null;
+      if (!recipient) {
         setError("No TapPay QR code found in that photo.");
         return;
       }
-      onChoose({ rib: payload.rib, displayName: payload.display_name || "Recipient" });
+      onChoose(recipient);
     } catch {
       setError("Couldn't read that photo -- try another one.");
     } finally {

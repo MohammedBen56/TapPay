@@ -101,6 +101,7 @@ export default function HomeScreen(): React.JSX.Element {
             <Text style={styles.currency}>{visible ? (balanceQuery.data?.currency ?? "MAD") : " "}</Text>
             <GlassButton label="Send money" onPress={() => router.push("/(tabs)/send")} style={styles.sendButton} />
             <GlassButton label="Pay bills" variant="ghost" onPress={() => router.push("/bills")} style={styles.payBillsButton} />
+            <GlassButton label="Request money" variant="ghost" onPress={() => router.push("/requests")} style={styles.payBillsButton} />
           </Card>
         </Animated.View>
 
