@@ -15,12 +15,12 @@ const FAQ: { question: string; answer: string }[] = [
   {
     question: "Is TapPay a real bank?",
     answer:
-      "No -- TapPay is a demo product. It moves no real funds and is not a licensed bank. Every balance and transaction here is simulated.",
+      "No — TapPay is a demo product. It moves no real funds and is not a licensed bank. Every balance and transaction here is simulated.",
   },
   {
     question: "How does biometric sign-in work?",
     answer:
-      "Your fingerprint or face unlock protects a securely stored login token on this device -- it never leaves the device, and your password is never cached alongside it.",
+      "Your fingerprint or face unlock protects a securely stored login token on this device — it never leaves the device, and your password is never cached alongside it.",
   },
   {
     question: "What does round-up savings do?",
@@ -35,7 +35,7 @@ const FAQ: { question: string; answer: string }[] = [
   {
     question: "What happens when I flag a transaction?",
     answer:
-      "It's recorded for review -- flagging never reverses or holds the money itself, since there's no dispute/chargeback mechanism here. Use the contact form below if you need a faster response.",
+      "It's recorded for review — flagging never reverses or holds the money itself, since there's no dispute/chargeback mechanism here. Use the contact form below if you need a faster response.",
   },
 ];
 
@@ -87,7 +87,7 @@ export default function HelpScreen(): React.JSX.Element {
       setSent(true);
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(err instanceof ApiError ? err.message : "Couldn't send your message -- check your connection and try again.");
+      setError(err instanceof ApiError ? err.message : "Couldn't send your message — check your connection and try again.");
     } finally {
       setBusy(false);
     }

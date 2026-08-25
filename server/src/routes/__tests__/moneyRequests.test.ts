@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { buildApp } from "../../app.js";
+import { config } from "../../config.js";
 import { db } from "../../db/kysely.js";
 import { authHeader, createTestCustomer } from "./v2TestHelpers.js";
 
@@ -51,6 +52,22 @@ describe("money requests (Ship List v2 Wave 2 Phase 7)", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "SelfPayment" });
+  });
+
+  it("rejects a request above the same maxTransferMinorUnits cap POST /transfers enforces", async () => {
+    // Found via a self-review audit: an earlier draft only checked
+    // amountMinor <= 0n, so a money request had no upper bound at all even
+    // though the identical amount sent via POST /transfers would be
+    // rejected. This proves the cap is now shared.
+    const [alice, bob] = await Promise.all([createTestCustomer(app), createTestCustomer(app)]);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/money-requests",
+      headers: authHeader(alice),
+      payload: { to_rib: bob.rib, amount: String(config.maxTransferMinorUnits + 1n), currency: "MAD", reference: "too much" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "InvalidAmount" });
   });
 
   it("only the named target can fulfill or decline a request", async () => {

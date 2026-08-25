@@ -21,7 +21,7 @@ interface Recipient {
   beneficiaryId?: string;
 }
 
-/** Ship List v2 Wave 2 Phase 7: creates a targeted money request -- same
+/** Ship List v2 Wave 2 Phase 7: creates a targeted money request — same
  * recipient-resolution shape as Send (contacts or a typed RIB), reused
  * deliberately rather than a QR-scan-to-pick-target flow, since a
  * request names a specific person by construction (server/routes/
@@ -44,7 +44,7 @@ export default function NewMoneyRequestScreen(): React.JSX.Element {
   const handleLookupRib = async (): Promise<void> => {
     const rib = ribInput.replace(/\s/g, "");
     if (!isValidRib(rib)) {
-      setRibError("That RIB doesn't look valid -- check the digits.");
+      setRibError("That RIB doesn't look valid — check the digits.");
       return;
     }
     setRibBusy(true);
@@ -53,7 +53,7 @@ export default function NewMoneyRequestScreen(): React.JSX.Element {
       const result = await api.lookupRib(rib);
       setRecipient({ rib: result.rib, displayName: result.display_name });
     } catch (err) {
-      setRibError(err instanceof ApiError && err.status === 404 ? "No account found with this RIB." : "Lookup failed -- try again.");
+      setRibError(err instanceof ApiError && err.status === 404 ? "No account found with this RIB." : "Lookup failed — try again.");
     } finally {
       setRibBusy(false);
     }
@@ -83,7 +83,7 @@ export default function NewMoneyRequestScreen(): React.JSX.Element {
       router.replace("/requests");
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setSubmitError(err instanceof ApiError ? err.message : "Couldn't send this request -- try again.");
+      setSubmitError(err instanceof ApiError ? err.message : "Couldn't send this request — try again.");
     } finally {
       setSubmitting(false);
     }

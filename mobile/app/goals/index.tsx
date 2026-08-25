@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 import { api } from "../../src/api/endpoints";
 import { ApiError } from "../../src/api/client";
@@ -47,7 +47,7 @@ function GoalRow({ goal, onFund, onDelete }: GoalRowProps): React.JSX.Element {
       setFunding(false);
       setFundInput("");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't add funds -- try again.");
+      setError(err instanceof ApiError ? err.message : "Couldn't add funds — try again.");
     } finally {
       setBusy(false);
     }
@@ -57,7 +57,15 @@ function GoalRow({ goal, onFund, onDelete }: GoalRowProps): React.JSX.Element {
     <Card style={styles.goalCard}>
       <View style={styles.goalHeader}>
         <Text style={styles.goalName}>{goal.name}</Text>
-        <Ionicons name="trash-outline" size={18} color={colors.textTertiary} onPress={() => onDelete(goal.id)} />
+        <Pressable
+          onPress={() => onDelete(goal.id)}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Delete goal"
+          accessibilityHint={`Deletes the ${goal.name} goal`}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.textTertiary} />
+        </Pressable>
       </View>
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
@@ -92,7 +100,7 @@ function GoalRow({ goal, onFund, onDelete }: GoalRowProps): React.JSX.Element {
 }
 
 /** Ship List v2 Wave 2 Phase 5: financial goals/vaults. A goal earmarks an
- * amount inside the customer's one real savings account -- funding is a
+ * amount inside the customer's one real savings account — funding is a
  * pure bookkeeping increment (server/routes/goals.ts), no money movement,
  * since the money already sits in savings. */
 export default function GoalsScreen(): React.JSX.Element {
@@ -133,7 +141,7 @@ export default function GoalsScreen(): React.JSX.Element {
       setCreating(false);
       await invalidate();
     } catch (err) {
-      setCreateError(err instanceof ApiError ? err.message : "Couldn't create goal -- try again.");
+      setCreateError(err instanceof ApiError ? err.message : "Couldn't create goal — try again.");
     } finally {
       setCreateBusy(false);
     }
@@ -185,7 +193,7 @@ export default function GoalsScreen(): React.JSX.Element {
       <ConfirmDialog
         visible={deleteCandidate !== null}
         title="Delete this goal?"
-        message="This only removes the tracking record -- any money already swept into savings stays there."
+        message="This only removes the tracking record — any money already swept into savings stays there."
         confirmLabel="Delete"
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleteCandidate(null)}

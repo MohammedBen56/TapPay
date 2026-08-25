@@ -38,6 +38,7 @@ module.exports = {
     },
     plugins: [
       ...(ENABLE_PROXIMITY_FEATURES ? ["./plugins/withBlePermissions.js"] : []),
+      ...(process.env.EAS_BUILD_PROFILE !== "production" ? ["./plugins/withDevLocalCaTrust.js"] : []),
       "./plugins/withNfcCompileSdkFix.js",
       "expo-camera",
       "expo-router",

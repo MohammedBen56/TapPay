@@ -111,6 +111,14 @@ jobs:
       - name: Test server
         run: pnpm --filter server test
 
+      # `pnpm -r lint` above only typechecks/lints mobile -- its jest-expo
+      # suite (AuthContext's inactivity-lock state machine, the WCAG
+      # contrast/font-scale-adjacent logic) needs no device or DB and was
+      # previously only ever run by hand. Found missing during a self-review
+      # audit of this file.
+      - name: Test mobile
+        run: pnpm --filter @tappay/mobile test
+
   # Split from a single "security" job: gitleaks/Trivy/zizmor need no
   # pnpm/Node at all, so running them in their own job (no
   # pnpm/action-setup or actions/setup-node steps) is both faster in

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -10,6 +10,7 @@ import { api } from "../../src/api/endpoints";
 import { ApiError } from "../../src/api/client";
 import { Card } from "../../src/components/Card";
 import { GlassButton } from "../../src/components/GlassButton";
+import { NfcSharingOverlay } from "../../src/components/NfcSharingOverlay";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
 import { SegmentedControl } from "../../src/components/SegmentedControl";
 import { colors, type } from "../../src/design/tokens";
@@ -36,7 +37,7 @@ function IncomingRow({ request, onRefresh }: { request: MoneyRequest; onRefresh:
       onRefresh();
     } catch (err) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(err instanceof ApiError ? err.message : "Couldn't pay this request -- try again.");
+      setError(err instanceof ApiError ? err.message : "Couldn't pay this request — try again.");
     } finally {
       setBusy(null);
     }
@@ -50,7 +51,7 @@ function IncomingRow({ request, onRefresh }: { request: MoneyRequest; onRefresh:
       void Haptics.selectionAsync();
       onRefresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't decline this request -- try again.");
+      setError(err instanceof ApiError ? err.message : "Couldn't decline this request — try again.");
     } finally {
       setBusy(null);
     }
@@ -69,8 +70,22 @@ function IncomingRow({ request, onRefresh }: { request: MoneyRequest; onRefresh:
         <>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
           <View style={styles.rowActions}>
-            <GlassButton label="Decline" variant="ghost" onPress={() => void handleDecline()} loading={busy === "decline"} style={styles.rowButton} />
-            <GlassButton label="Pay" variant="ghost" onPress={() => void handlePay()} loading={busy === "pay"} style={styles.rowButton} />
+            <GlassButton
+              label="Decline"
+              variant="ghost"
+              onPress={() => void handleDecline()}
+              loading={busy === "decline"}
+              style={styles.rowButton}
+              accessibilityHint={`Declines this request for ${formatMAD(request.amount)} MAD`}
+            />
+            <GlassButton
+              label="Pay"
+              variant="ghost"
+              onPress={() => void handlePay()}
+              loading={busy === "pay"}
+              style={styles.rowButton}
+              accessibilityHint={`Pays ${request.requester.display_name ?? "this person"} ${formatMAD(request.amount)} MAD`}
+            />
           </View>
         </>
       ) : (
@@ -82,6 +97,7 @@ function IncomingRow({ request, onRefresh }: { request: MoneyRequest; onRefresh:
 
 function OutgoingRow({ request }: { request: MoneyRequest }): React.JSX.Element {
   const [sharing, setSharing] = useState(false);
+  const [nfcActive, setNfcActive] = useState(false);
 
   const qrValue =
     request.status === "pending" && request.requester.rib
@@ -105,12 +121,13 @@ function OutgoingRow({ request }: { request: MoneyRequest }): React.JSX.Element 
   );
 
   return (
+    <Fragment>
     <Card style={styles.row}>
       <View style={styles.rowHeader}>
         <View style={styles.rowMiddle}>
           <Text style={styles.rowName}>{request.target.display_name ?? "Someone"}</Text>
           <Text style={styles.rowMeta}>
-            {request.reference} -- {formatShortDate(request.created_at)}
+            {request.reference} — {formatShortDate(request.created_at)}
           </Text>
         </View>
         <Text style={styles.rowAmount}>{formatMAD(request.amount)} MAD</Text>
@@ -124,8 +141,12 @@ function OutgoingRow({ request }: { request: MoneyRequest }): React.JSX.Element 
               <GlassButton
                 label="Share via NFC"
                 variant="ghost"
-                onPress={() => void startNfcSharing(qrValue)}
+                onPress={() => {
+                  void startNfcSharing(qrValue);
+                  setNfcActive(true);
+                }}
                 style={styles.rowButton}
+                accessibilityHint="Starts broadcasting this request over NFC"
               />
               <GlassButton
                 label="Done"
@@ -135,16 +156,33 @@ function OutgoingRow({ request }: { request: MoneyRequest }): React.JSX.Element 
                   setSharing(false);
                 }}
                 style={styles.rowButton}
+                accessibilityHint="Hides the QR code and stops NFC sharing"
               />
             </View>
           </View>
         ) : (
-          <GlassButton label="Show QR / NFC" variant="ghost" onPress={() => setSharing(true)} style={styles.showQrButton} />
+          <GlassButton
+            label="Show QR / NFC"
+            variant="ghost"
+            onPress={() => setSharing(true)}
+            style={styles.showQrButton}
+            accessibilityHint="Shows a QR code and NFC option to share this request"
+          />
         )
       ) : (
         <Text style={styles.statusText}>{statusLabel(request.status)}</Text>
       )}
     </Card>
+    {nfcActive && (
+      <NfcSharingOverlay
+        body="Bring the back of this phone close to the other person's phone so they can pay this request."
+        onDone={() => {
+          void stopNfcSharing();
+          setNfcActive(false);
+        }}
+      />
+    )}
+    </Fragment>
   );
 }
 
@@ -153,7 +191,7 @@ function OutgoingRow({ request }: { request: MoneyRequest }): React.JSX.Element 
  * moneyRequests.ts), so a paid request shows up in the normal
  * transaction history too. QR/NFC on an outgoing request is a DELIVERY
  * mechanism for an already-targeted request, not a way to let anyone
- * fulfill it -- only the named target can pay or decline. */
+ * fulfill it — only the named target can pay or decline. */
 export default function MoneyRequestsScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["money-requests"], queryFn: api.moneyRequests });

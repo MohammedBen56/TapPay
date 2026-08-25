@@ -28,6 +28,7 @@ interface GlassButtonProps {
   disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
+  accessibilityHint?: string;
 }
 
 const GLASS_FILL: Record<"ghost" | "danger", string> = {
@@ -46,7 +47,15 @@ const TEXT_COLORS: Record<GlassButtonVariant, string> = {
   danger: colors.danger,
 };
 
-export function GlassButton({ label, onPress, variant = "primary", disabled, loading, style }: GlassButtonProps): React.JSX.Element {
+export function GlassButton({
+  label,
+  onPress,
+  variant = "primary",
+  disabled,
+  loading,
+  style,
+  accessibilityHint,
+}: GlassButtonProps): React.JSX.Element {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
   const isDisabled = disabled || loading;
@@ -80,6 +89,7 @@ export function GlassButton({ label, onPress, variant = "primary", disabled, loa
         }}
         accessibilityRole="button"
         accessibilityState={{ disabled: isDisabled }}
+        accessibilityHint={accessibilityHint}
       >
         {variant === "primary" ? (
           <LinearGradient

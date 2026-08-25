@@ -1,6 +1,6 @@
 # Custom Semgrep rules
 
-Five rules, each encoding a real invariant or a real incident this codebase
+Six rules, each encoding a real invariant or a real incident this codebase
 already hit once (see `docs/incidents/`). Run locally:
 
 ```bash
@@ -20,6 +20,7 @@ alone always exits 0, findings or not. CI (`.github/workflows/ci.yml`'s
 | `lockaccount-without-ordering` | Two direct `lockAccount()` calls instead of `lockAccountsInOrder()` is the deadlock CLAUDE.md §5 / ADV-06 exist to rule out. |
 | `client-supplied-identifier` | The recurring bug family CLAUDE.md §10 names explicitly: an `account_id`/`user_id` read from `request.body`/`params`/`query` instead of the JWT's `request.user.aid`/`.sub`. One accepted exception (`routes/tx.ts`, D2 -- genuinely unauthenticated, no `request.user` exists there). |
 | `raw-error-to-response` | The reason `app.ts` has a centralized `setErrorHandler` at all: a raw Postgres constraint violation or a full zod dump reaching a client verbatim. |
+| `settlement-without-advisory-lock` | Ship List v2 Wave 2's two real TOCTOU double-settlement bugs (Phase 4's velocity cap, Phase 7's money-request fulfillment) -- an unlocked pre-check followed by an unwrapped `bankAdapter.transfer()` call. Accepted exceptions (`billPayments.ts`, `roundup.ts` -- no racy pre-check state to protect) are marked `// nosemgrep`. |
 
 ## Fixture convention (verified, not assumed)
 

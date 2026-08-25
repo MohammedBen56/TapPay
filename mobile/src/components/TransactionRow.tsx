@@ -11,8 +11,14 @@ export function TransactionRow({ tx }: { tx: TransactionSummary }): React.JSX.El
   const name = tx.counterparty_name ?? "Unknown";
   const date = formatShortDate(tx.created_at);
 
+  const amountLabel = `${isCredit ? "Received" : "Sent"} ${formatMAD(tx.amount)}`;
+  const label = `${name}, ${tx.reference ?? "no reference"}, ${date}, ${amountLabel}`;
+
   return (
-    <Pressable accessibilityRole="button"
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint="Opens the full receipt"
       onPress={() => router.push({ pathname: "/transfer/[txUuid]", params: { txUuid: tx.tx_uuid } })}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

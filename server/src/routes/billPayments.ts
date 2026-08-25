@@ -108,6 +108,7 @@ export function registerBillPaymentRoutes(app: FastifyInstance): void {
     }
 
     const reference = composeReference(biller.category, biller.name, subscriber_reference);
+    // nosemgrep: settlement-without-advisory-lock -- no racy pre-check state above this: amount/biller are validated inline, not read-then-compared-then-settled like transfers.ts's velocity cap.
     const result = await bankAdapter.transfer(tx_uuid, fromAccountId, biller.account_id, amountMinor, currency, { reference });
 
     if (!result.success) {

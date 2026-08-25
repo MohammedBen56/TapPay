@@ -18,7 +18,7 @@ function SubscriptionRow({ subscription }: { subscription: DetectedSubscription 
       <View style={styles.rowMiddle}>
         <Text style={styles.rowName}>{subscription.counterparty_name ?? "Unknown recipient"}</Text>
         <Text style={styles.rowMeta}>
-          Every ~{subscription.average_interval_days} days -- last paid {formatShortDate(subscription.last_paid_at)}
+          Every ~{subscription.average_interval_days} days — last paid {formatShortDate(subscription.last_paid_at)}
         </Text>
       </View>
       <Text style={styles.rowAmount}>{formatMAD(subscription.amount)} MAD</Text>
@@ -27,7 +27,7 @@ function SubscriptionRow({ subscription }: { subscription: DetectedSubscription 
 }
 
 /** Ship List v2 Wave 2 Phase 5: subscription tracking. Pure read-only
- * pattern detection (server/routes/subscriptions.ts) -- no new stored
+ * pattern detection (server/routes/subscriptions.ts) — no new stored
  * data, no write path. A heuristic, stated plainly to the user rather
  * than presented as a guarantee. */
 export default function SubscriptionsScreen(): React.JSX.Element {
@@ -38,7 +38,7 @@ export default function SubscriptionsScreen(): React.JSX.Element {
     <ScreenBackground>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.intro}>
-          Recurring payments we&apos;ve noticed in your history -- same recipient, same amount, roughly once a month.
+          Recurring payments we&apos;ve noticed in your history — same recipient, same amount, roughly once a month.
           Not guaranteed to be complete or accurate.
         </Text>
         {query.isLoading ? null : subscriptions.length === 0 ? (

@@ -1,0 +1,30 @@
+rules:
+  - id: settlement-without-advisory-lock
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      bankAdapter.transfer() called without being wrapped in
+      withAccountAdvisoryLock()/withAdvisoryLock(). Two real TOCTOU
+      double-settlement bugs shipped this exact way and were only caught by
+      manual /security-review or pattern-recognition, not tooling: Ship
+      List v2 Wave 2 Phase 4's rolling velocity-cap check (an unlocked SUM
+      pre-check let concurrent transfers each pass individually while
+      collectively exceeding the cap) and Phase 7's money-request
+      fulfillment (an unlocked status==pending pre-check let concurrent
+      fulfill calls both settle). Wrap the check-then-settle critical
+      section in withAccountAdvisoryLock -- see transfers.ts / moneyRequests.ts
+      for the pattern. If this call site genuinely has no racy pre-check
+      state to protect (a plain idempotent settlement with no separate
+      mutable status/cap read beforehand, e.g. billPayments.ts,
+      roundup.ts), mark it `// nosemgrep: settlement-without-advisory-lock`
+      with a one-line reason on the matched line, same convention as this
+      repo's other rules' accepted exceptions.
+    patterns:
+      - pattern: $ADAPTER.transfer(...)
+      - pattern-not-inside: |
+          withAccountAdvisoryLock($DB, $ACCOUNT, async ($TRX) => { ... })
+      - pattern-not-inside: |
+          withAdvisoryLock($DB, $KEY, $FN)
+      - metavariable-regex:
+          metavariable: $ADAPTER
+          regex: (?i)bankadapter

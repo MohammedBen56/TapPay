@@ -68,6 +68,7 @@ export async function maybeSweepRoundUp(params: {
   const roundUpAmount = roundTo - remainder;
 
   const sweepTxUuid = deriveTxUuid(`roundup:${originalTxUuid}`);
+  // nosemgrep: settlement-without-advisory-lock -- deterministic tx_uuid makes a resubmission an idempotent no-op via the ledger's own tx_uuid keying, not a lock-guarded critical section; there's no separate mutable pre-check state a concurrent call could race.
   await bankAdapter.transfer(sweepTxUuid, fromAccountId, savings.account_id, roundUpAmount, currency, {
     reference: "Round-up savings",
   });

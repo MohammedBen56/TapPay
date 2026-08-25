@@ -31,7 +31,10 @@ export type ErrorCode =
   // Ship List v2 Wave 2 Phase 4:
   | "StepUpRequired"
   | "VelocityCapExceeded"
-  | "AccountBusy";
+  | "AccountBusy"
+  // Ship List v2 Wave 3 (self-review hardening pass):
+  | "NoSavingsAccount"
+  | "InsufficientSavings";
 
 export interface ApiErrorBody {
   error: ErrorCode;

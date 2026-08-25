@@ -166,6 +166,54 @@ async function seedHistoricalTransfer(
   });
 }
 
+/** Ship List v2 Wave 3 (self-review hardening pass): a historical bill
+ * payment, seeded the same way seedHistoricalTransfer is -- direct
+ * journal+transfers insert, not through MockBankAdapter -- plus the
+ * matching bill_payments row `billPayments.ts` would have written as its
+ * second, best-effort statement. Looks the biller up by name (migration
+ * 018's catalog, not re-typed here) rather than hardcoding its account id.
+ * Backdating 2-3 of these to the same biller/amount roughly a month apart
+ * is what gives subscriptions.ts's detector (>=2 occurrences, 25-35 day
+ * gap) something real to find in a fresh demo, not just a P2P history. */
+async function seedHistoricalBillPayment(
+  customerAccountId: string,
+  billerName: string,
+  amountMinor: bigint,
+  subscriberReference: string,
+  daysAgo: number,
+): Promise<void> {
+  const biller = await db.selectFrom("billers").select(["id", "account_id", "category", "name"]).where("name", "=", billerName).executeTakeFirstOrThrow();
+  const txUuid = randomUUID();
+  const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+  const reference = `${biller.name} -- ${subscriberReference}`;
+
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .insertInto("journal")
+      .values([
+        { tx_uuid: txUuid, account_id: customerAccountId, amount: -amountMinor, currency: "MAD", created_at: createdAt },
+        { tx_uuid: txUuid, account_id: biller.account_id, amount: amountMinor, currency: "MAD", created_at: createdAt },
+      ])
+      .execute();
+    await trx
+      .insertInto("transfers")
+      .values({
+        tx_uuid: txUuid,
+        from_account_id: customerAccountId,
+        to_account_id: biller.account_id,
+        amount: amountMinor,
+        currency: "MAD",
+        reference,
+        created_at: createdAt,
+      })
+      .execute();
+    await trx
+      .insertInto("bill_payments")
+      .values({ tx_uuid: txUuid, account_id: customerAccountId, biller_id: biller.id, subscriber_reference: subscriberReference, created_at: createdAt })
+      .execute();
+  });
+}
+
 async function seedBeneficiary(ownerUserId: string, displayName: string, rib: string): Promise<void> {
   await db
     .insertInto("beneficiaries")
@@ -216,8 +264,13 @@ async function main(): Promise<void> {
 
   const [yasmine, karim, sofia, omar, nadia] = seeded as [SeededAccount, SeededAccount, SeededAccount, SeededAccount, SeededAccount];
 
-  // ~15 historical transfers between the demo customers, spread over ~6
-  // weeks, realistic amounts and references.
+  // ~45 historical transfers between the demo customers, spread over ~3
+  // months (not ~6 weeks) -- found via a self-review audit as the single
+  // highest-leverage fix for how thin a live client walkthrough looked:
+  // a handful of rows over 6 weeks reads as a toy, not a used account.
+  // Includes three deliberately recurring loyer (rent) payments at ~30-day
+  // intervals so subscriptions.ts's detector has real P2P history to find
+  // too, not just billers below.
   await Promise.all([
     seedHistoricalTransfer(yasmine.accountId, karim.accountId, 420_000n, "Loyer Août", 4),
     seedHistoricalTransfer(sofia.accountId, yasmine.accountId, 18_000n, "Remboursement déjeuner", 6),
@@ -232,10 +285,55 @@ async function main(): Promise<void> {
     seedHistoricalTransfer(sofia.accountId, karim.accountId, 300_000n, "Investissement commun", 36),
     seedHistoricalTransfer(karim.accountId, nadia.accountId, 22_000n, "Anniversaire Sami", 39),
     seedHistoricalTransfer(yasmine.accountId, sofia.accountId, 95_000n, "Facture #0981", 41),
-    seedHistoricalTransfer(nadia.accountId, sofia.accountId, 60_000n, "Loyer Juin", 44),
+    seedHistoricalTransfer(nadia.accountId, sofia.accountId, 250_000n, "Loyer Juin", 44),
     seedHistoricalTransfer(karim.accountId, yasmine.accountId, 27_000n, "Remboursement resto", 46),
+    seedHistoricalTransfer(sofia.accountId, karim.accountId, 40_000n, "Courses Marjane", 49),
+    seedHistoricalTransfer(nadia.accountId, karim.accountId, 8_500n, "Taxi aéroport", 51),
+    seedHistoricalTransfer(yasmine.accountId, nadia.accountId, 150_000n, "Facture #0955", 53),
+    seedHistoricalTransfer(karim.accountId, sofia.accountId, 60_000n, "Remboursement resto", 56),
+    seedHistoricalTransfer(sofia.accountId, yasmine.accountId, 22_500n, "Anniversaire", 58),
+    seedHistoricalTransfer(nadia.accountId, yasmine.accountId, 33_000n, "Covoiturage", 61),
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 250_000n, "Loyer Mai", 64),
+    seedHistoricalTransfer(yasmine.accountId, sofia.accountId, 12_000n, "Café", 66),
+    seedHistoricalTransfer(sofia.accountId, nadia.accountId, 45_000n, "Cadeau naissance", 69),
+    seedHistoricalTransfer(karim.accountId, yasmine.accountId, 18_000n, "Remboursement déjeuner", 71),
+    seedHistoricalTransfer(nadia.accountId, sofia.accountId, 70_000n, "Facture #0912", 74),
+    seedHistoricalTransfer(yasmine.accountId, karim.accountId, 55_000n, "Sortie cinéma", 77),
+    seedHistoricalTransfer(sofia.accountId, karim.accountId, 26_000n, "Courses Marjane", 79),
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 90_000n, "Acompte mariage", 82),
+    seedHistoricalTransfer(nadia.accountId, karim.accountId, 15_000n, "Café", 85),
+    seedHistoricalTransfer(yasmine.accountId, sofia.accountId, 200_000n, "Remboursement prêt", 88),
+    // Four recurring rent payments, ~30 days apart, same pair/amount -- a
+    // real subscription-shaped P2P pattern for subscriptions.ts to detect,
+    // not just billers below.
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 350_000n, "Loyer", 2),
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 350_000n, "Loyer", 32),
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 350_000n, "Loyer", 62),
+    seedHistoricalTransfer(karim.accountId, nadia.accountId, 350_000n, "Loyer", 92),
   ]);
-  console.log("seeded 15 historical transfers");
+  console.log("seeded 35 historical transfers");
+
+  // A handful of real bill payments per customer -- billPayments.ts's own
+  // catalog (migration 018), not a fictional stand-in. Atlas Power Co. and
+  // NexaNet Broadband are each paid 2-3 times ~30 days apart by the same
+  // customer specifically so both subscriptions.ts's detector AND Home's
+  // biller-flagged transaction rows (is_biller/biller_category) have
+  // something real to show in a fresh demo, not an empty GET
+  // /bill-payments and an empty Subscriptions screen.
+  await Promise.all([
+    seedHistoricalBillPayment(yasmine.accountId, "Atlas Power Co.", 34_500n, "SUB-10000001-E", 3),
+    seedHistoricalBillPayment(yasmine.accountId, "Atlas Power Co.", 31_200n, "SUB-10000001-E", 33),
+    seedHistoricalBillPayment(yasmine.accountId, "Atlas Power Co.", 29_800n, "SUB-10000001-E", 63),
+    seedHistoricalBillPayment(yasmine.accountId, "NexaNet Broadband", 19_900n, "SUB-10000001-N", 12),
+    seedHistoricalBillPayment(yasmine.accountId, "NexaNet Broadband", 19_900n, "SUB-10000001-N", 42),
+    seedHistoricalBillPayment(karim.accountId, "Bluewell Water Utilities", 12_400n, "SUB-10000002-W", 8),
+    seedHistoricalBillPayment(karim.accountId, "Bluewell Water Utilities", 11_100n, "SUB-10000002-W", 38),
+    seedHistoricalBillPayment(sofia.accountId, "Skyline Telecom", 24_900n, "SUB-10000003-T", 5),
+    seedHistoricalBillPayment(sofia.accountId, "Skyline Telecom", 24_900n, "SUB-10000003-T", 35),
+    seedHistoricalBillPayment(sofia.accountId, "Skyline Telecom", 24_900n, "SUB-10000003-T", 65),
+    seedHistoricalBillPayment(nadia.accountId, "Northline Electric", 27_600n, "SUB-10000005-E", 14),
+  ]);
+  console.log("seeded 11 historical bill payments");
 
   // 2-3 cross-referencing beneficiaries per customer, so the Send flow's
   // contacts list is never empty on first launch. owner_user_id, not

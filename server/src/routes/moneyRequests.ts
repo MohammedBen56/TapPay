@@ -4,12 +4,17 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { bankAdapter } from "../adapters/index.js";
 import { recordAudit } from "../audit/log.js";
+import { config } from "../config.js";
 import { withAccountAdvisoryLock } from "../db/advisoryLock.js";
 import { db } from "../db/kysely.js";
 import { notify } from "../notifications.js";
 import { resolveOwnedAccount } from "./accountSelection.js";
 import { sendSettlementFailure } from "./settlementRouteHelpers.js";
 import { moneyRequestTotal } from "../metrics.js";
+
+// Defensive cap, same pattern as notifications.ts's NOTIFICATIONS_LIST_CAP --
+// this list has no pagination UI yet, so it's a ceiling, not a page size.
+const MONEY_REQUESTS_LIST_CAP = 200;
 
 // Same control-character guard as transfers.ts's referenceSchema.
 const referenceSchema = z
@@ -114,6 +119,7 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
       ])
       .where((eb) => eb.or([eb("mr.requester_user_id", "=", userId), eb("mr.target_user_id", "=", userId)]))
       .orderBy("mr.created_at", "desc")
+      .limit(MONEY_REQUESTS_LIST_CAP)
       .execute();
 
     const incoming = rows.filter((r) => r.target_user_id === userId).map(serializeMoneyRequest);
@@ -130,8 +136,8 @@ export function registerMoneyRequestRoutes(app: FastifyInstance): void {
     const { sub: userId } = request.user;
 
     const amountMinor = BigInt(amount);
-    if (amountMinor <= 0n) {
-      return reply.status(400).send({ error: "InvalidAmount", message: "amount must be positive" });
+    if (amountMinor <= 0n || amountMinor > config.maxTransferMinorUnits) {
+      return reply.status(400).send({ error: "InvalidAmount", message: "amount must be positive and within the allowed limit" });
     }
 
     const requesterAccount = await resolveOwnedAccount(userId);

@@ -1,4 +1,4 @@
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -7,13 +7,14 @@ import * as Sharing from "expo-sharing";
 import { useCallback, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import Animated, { FadeIn } from "react-native-reanimated";
 import ViewShot, { type ViewShotRef } from "react-native-view-shot";
 import { meQueryOptions } from "../../src/api/queries";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Card } from "../../src/components/Card";
 import { ConfirmDialog } from "../../src/components/ConfirmDialog";
 import { GlassButton } from "../../src/components/GlassButton";
+import { NfcSharingOverlay } from "../../src/components/NfcSharingOverlay";
 import { ScreenBackground } from "../../src/components/ScreenBackground";
 import { colors, type } from "../../src/design/tokens";
 import { formatRibGrouped } from "../../src/design/format";
@@ -129,27 +130,13 @@ export default function ProfileScreen(): React.JSX.Element {
       </ScrollView>
 
       {nfcSharing && (
-        <Animated.View entering={FadeIn.duration(200)} style={styles.nfcOverlay}>
-          <Animated.View entering={FadeInDown.duration(250)} style={styles.nfcCardWrap}>
-            <Card style={styles.nfcCard}>
-              <View style={styles.nfcIcon}>
-                <MaterialIcons name="nfc" size={32} color={colors.bone} />
-              </View>
-              <Text style={styles.promptTitle}>Hold phones together</Text>
-              <Text style={styles.promptBody}>
-                Bring the back of this phone close to the other person&apos;s phone to share your account info.
-              </Text>
-              <GlassButton
-                label="Done"
-                onPress={() => {
-                  void stopNfcSharing();
-                  setNfcSharing(false);
-                }}
-                style={styles.nfcDoneButton}
-              />
-            </Card>
-          </Animated.View>
-        </Animated.View>
+        <NfcSharingOverlay
+          body="Bring the back of this phone close to the other person's phone to share your account info."
+          onDone={() => {
+            void stopNfcSharing();
+            setNfcSharing(false);
+          }}
+        />
       )}
 
       <ConfirmDialog

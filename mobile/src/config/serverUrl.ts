@@ -29,4 +29,4 @@
  * reject this connection as an untrusted certificate -- that's correct
  * behavior, not a bug, and Phase 5's certificate pinning replaces this
  * manual-trust step entirely once it lands. */
-export const SERVER_BASE_URL = 'https://192.168.1.32';
+export const SERVER_BASE_URL = 'https://192.168.1.52';

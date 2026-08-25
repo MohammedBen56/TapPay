@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { bankAdapter } from "../adapters/index.js";
 import { recordAudit } from "../audit/log.js";
 import { db } from "../db/kysely.js";
+import { resolveAccountByType } from "./accountSelection.js";
 
 export const createGoalBodySchema = z.object({
   name: z.string().trim().min(1).max(140),
@@ -26,6 +28,20 @@ export const fundGoalBodySchema = z.object({
  * `saved_amount`, never a `bankAdapter.transfer()` call, since the money
  * already sits in savings. Always scoped by `owner_user_id` from the JWT's
  * `sub`, same client-suppliable-identifier pattern as beneficiaries.ts.
+ *
+ * **Overfund/double-earmark check** (found via critical self-review, not
+ * scoped in the original phase plan): the first draft let `saved_amount`
+ * grow unconditionally, so a user could "earmark" more across their goals
+ * than actually sits in savings -- the UI would show real-looking progress
+ * bars for money that was never there. `/goals/:id/fund` now checks the
+ * real savings balance (`bankAdapter.getAvailableBalance()`) against the
+ * SUM of the user's own `goals.saved_amount` (including this fund) before
+ * committing. Deliberately NOT advisory-locked like `transfers.ts`'s
+ * velocity cap: this is bookkeeping over money that never moves (no ledger
+ * row, no double-spend risk) -- a race between two concurrent funds could
+ * still let the displayed total drift slightly ahead of the real balance
+ * for one request's window, an accepted, low-stakes gap given nothing here
+ * can debit an account past its real balance.
  */
 export function registerGoalRoutes(app: FastifyInstance): void {
   app.get("/goals", { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -97,6 +113,24 @@ export function registerGoalRoutes(app: FastifyInstance): void {
     const amount = BigInt(parsed.data.amount);
     if (amount <= 0n) {
       return reply.status(400).send({ error: "InvalidAmount", message: "amount must be positive" });
+    }
+
+    const savingsAccount = await resolveAccountByType(userId, "savings");
+    if (!savingsAccount) {
+      return reply.status(404).send({ error: "NoSavingsAccount", message: "open a savings account before funding a goal" });
+    }
+    const [savingsBalance, earmarked] = await Promise.all([
+      bankAdapter.getAvailableBalance(savingsAccount.account_id, savingsAccount.currency),
+      db
+        .selectFrom("goals")
+        .select((eb) => eb.fn.coalesce(eb.fn.sum<bigint>("saved_amount"), eb.lit(0)).as("total"))
+        .where("owner_user_id", "=", userId)
+        .executeTakeFirstOrThrow(),
+    ]);
+    if (BigInt(earmarked.total) + amount > savingsBalance) {
+      return reply
+        .status(400)
+        .send({ error: "InsufficientSavings", message: "this would earmark more than your real savings balance" });
     }
 
     const updated = await db
