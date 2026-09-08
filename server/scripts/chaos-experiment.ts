@@ -24,7 +24,8 @@
  */
 import { execSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { config } from "../src/config.js";
 import { createDb, MINT_ACCOUNT_ID } from "../src/db/kysely.js";
 import { checkLedgerInvariants } from "../src/ledger/invariants.js";
@@ -35,7 +36,7 @@ const PROXIED_DB_URL = "postgres://tappay:tappay@localhost:15433/tappay";
 const POOL_SIZE = 6;
 const STARTING_BALANCE = 1_000_000n;
 const BURST_SIZE = 20;
-const REPORT_PATH = "../ops/CHAOS_LOG.md";
+const REPORT_PATH = "../docs/CHAOS_LOG.md";
 
 interface FaultResult {
   fault: string;
@@ -215,6 +216,8 @@ async function main(): Promise<void> {
     .join("\n");
 
   if (!existsSync(REPORT_PATH)) {
+    // docs/ is gitignored, so it may not exist at all in a fresh clone.
+    mkdirSync(dirname(REPORT_PATH), { recursive: true });
     writeFileSync(
       REPORT_PATH,
       "# Chaos experiment log\n\nDated rows, oldest first. Each run injects a real infrastructure fault (via toxiproxy or a real `docker compose kill`) during a burst of concurrent transfers, then runs checkLedgerInvariants() -- see server/scripts/chaos-experiment.ts.\n\n| Date (UTC) | Fault | Attempted | Succeeded | Failed | Invariants | Notes |\n|---|---|---|---|---|---|---|\n",

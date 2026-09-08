@@ -117,7 +117,7 @@ export const config = {
    * that write-path reasoning never justified capping the READ path at
    * the same number -- GET /me, /accounts/me/balance,
    * /accounts/me/transactions, /billers, /bill-payments never touch a row
-   * lock at all. ops/BENCHMARK.md's 2026-08-19 load test found exactly
+   * lock at all. docs/BENCHMARK.md's 2026-08-19 load test found exactly
    * this: p50 stayed ~5ms while p95 rose to ~712ms (crossing the 300ms
    * target) under 100 concurrent read-only VUs -- the signature of
    * queueing for one of only 10 shared connections, not slow queries.
@@ -126,7 +126,7 @@ export const config = {
    * headroom for pgAdmin, ad-hoc psql, one-off migration/seed runs, and
    * Grafana/Prometheus (which only scrape GET /metrics over HTTP, never
    * connect to Postgres directly, so they cost nothing here). Re-run
-   * ops/BENCHMARK.md's exact load test after any further change to this
+   * docs/BENCHMARK.md's exact load test after any further change to this
    * value -- the benchmark script and thresholds already exist
    * specifically to make that re-verification cheap. A true read/write
    * pool split (a second Kysely instance for read-only routes) was

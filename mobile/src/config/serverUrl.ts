@@ -24,7 +24,7 @@
  * proxy that doesn't care). Requires the phone and this host to be on the
  * same WiFi network -- true for this project's two-phone dev setup, and not
  * a new requirement (Metro's bundle loading already needed it). Until the
- * phone trusts the local mkcert CA (see mobile/DEVICE_TEST_MATRIX.md for
+ * phone trusts the local mkcert CA (see docs/DEVICE_TEST_MATRIX.md for
  * the one-time device-trust step, Ship List Phase 6), expect the OS to
  * reject this connection as an untrusted certificate -- that's correct
  * behavior, not a bug, and Phase 5's certificate pinning replaces this

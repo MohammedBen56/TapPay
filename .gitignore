@@ -36,3 +36,10 @@ telemetry/data/*.png
 # Claude Code local/session state
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Project docs, design notes, analysis and incident/bug writeups -- kept
+# local only. This repository is public; these files are not for it.
+# CLAUDE.md stays at the repo root (Claude Code only auto-loads it from
+# there) but is untracked for the same reason.
+docs/
+/CLAUDE.md

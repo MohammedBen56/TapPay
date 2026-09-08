@@ -17,12 +17,13 @@
  */
 import { execSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createDb } from "../src/db/kysely.js";
 import { checkLedgerInvariants } from "../src/ledger/invariants.js";
 
 const CONTAINER_NAME = `tappay-restore-drill-${randomUUID().slice(0, 8)}`;
-const REPORT_PATH = "../ops/RESTORE_DRILL.md";
+const REPORT_PATH = "../docs/RESTORE_DRILL.md";
 
 function run(cmd: string): string {
   return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim();
@@ -96,6 +97,8 @@ async function main(): Promise<void> {
 
   const row = `| ${new Date().toISOString()} | ${restoreMs}ms | ${totalMs}ms | ${report.ok ? "✅ clean" : "❌ FAILED"} |\n`;
   if (!existsSync(REPORT_PATH)) {
+    // docs/ is gitignored, so it may not exist at all in a fresh clone.
+    mkdirSync(dirname(REPORT_PATH), { recursive: true });
     writeFileSync(
       REPORT_PATH,
       "# Restore drill log\n\nDated rows, oldest first. Each run dumps the real dev database, restores it into a throwaway container, and runs checkLedgerInvariants() against the restored copy -- see server/scripts/restore-drill.ts.\n\n| Date (UTC) | Restore time | Total time | Result |\n|---|---|---|---|\n",
