@@ -175,7 +175,7 @@ jobs:
       # zizmorcore/zizmor-action's own README recommends
       # `persist-credentials: false` on checkout, already applied above.
       - name: Audit GitHub Actions workflows (zizmor)
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           # This repo doesn't carry a GitHub Advanced Security subscription
           # (private repo, personal account) -- SARIF-upload mode requires
